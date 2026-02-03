@@ -1,0 +1,39 @@
+@startuml
+' Deployment View
+left to right direction
+skinparam packageStyle rectangle
+
+node "Client" {
+  [Browser] as C1
+}
+
+node "Edge" {
+  [CDN + Static Hosting] as CDN
+}
+
+node "Backend" {
+  [API Gateway] as APIGW
+  [Chat Service] as CHAT
+  [Search Service] as SEARCH
+  [Conversion Orchestrator] as CONV
+  [Job Queue] as QUEUE
+  [Conversion Workers] as WORK
+  [Object Storage] as STORE
+  [Notification Service] as NOTIF
+  [Logs/Metrics/Tracing] as OBS
+}
+
+C1 --> CDN
+CDN --> APIGW
+APIGW --> CHAT
+APIGW --> SEARCH
+APIGW --> CONV
+CONV --> QUEUE
+QUEUE --> WORK
+WORK --> STORE
+WORK --> OBS
+SEARCH --> OBS
+CHAT --> OBS
+CONV --> OBS
+NOTIF --> C1
+@enduml

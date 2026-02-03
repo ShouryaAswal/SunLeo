@@ -1,0 +1,32 @@
+@startuml
+' Sequence: Chat → Search → Convert
+actor User as U
+participant "Web UI" as UI
+participant "Chatbot Orchestrator" as BOT
+participant "Search Service" as SR
+participant "YouTube Data API" as YT
+participant "Link Resolver" as RES
+participant "Conversion Orchestrator" as OR
+queue "Job Queue" as Q
+participant "Worker" as W
+participant "MP3 Module" as MOD
+participant "Storage" as ST
+
+U -> UI : Enter query
+UI -> BOT : Send message
+BOT -> SR : search(query)
+SR -> YT : search API
+YT --> SR : results
+SR --> BOT : results
+BOT --> UI : show options
+U -> UI : select result
+UI -> RES : validate URL
+RES -> OR : request conversion
+OR -> Q : enqueue job
+Q -> W : deliver job
+W -> MOD : convert(url)
+MOD --> W : mp3 file
+W -> ST : store file
+ST --> UI : download link
+UI --> U : show link
+@enduml

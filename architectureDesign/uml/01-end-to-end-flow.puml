@@ -1,0 +1,42 @@
+@startuml
+' End-to-End Flow
+left to right direction
+skinparam packageStyle rectangle
+
+actor User as U
+rectangle "Web UI" as UI
+rectangle "Chatbot Orchestrator" as BOT
+rectangle "Search Service" as SRCH
+rectangle "YouTube Data API" as YT
+rectangle "Link Resolver" as RES
+rectangle "Conversion Orchestrator" as ORCH
+queue "Job Queue" as Q
+rectangle "Conversion Worker" as WORK
+rectangle "MP3 Conversion Module" as MOD
+rectangle "File Storage" as STORE
+rectangle "Download Link" as DL
+rectangle "Observability" as LOG
+
+U --> UI : Query / Chat
+UI --> BOT
+BOT --> SRCH : search intent
+SRCH --> YT : search API
+YT --> SRCH : results
+SRCH --> BOT : results
+BOT --> UI : options
+UI --> RES : chosen video
+RES --> ORCH : request conversion
+ORCH --> Q : enqueue
+Q --> WORK : job
+WORK --> MOD : convert(url)
+MOD --> WORK : mp3 file
+WORK --> STORE : store file
+STORE --> DL : link
+DL --> UI : deliver
+UI --> U : show link
+
+BOT --> LOG
+SRCH --> LOG
+ORCH --> LOG
+WORK --> LOG
+@enduml

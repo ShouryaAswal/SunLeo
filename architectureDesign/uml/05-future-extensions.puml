@@ -1,0 +1,35 @@
+@startuml
+' Future Extensions (Voice to Text & More)
+left to right direction
+skinparam packageStyle rectangle
+
+package "Input" {
+  [Voice Input] as V
+  [Text Input] as T
+}
+
+package "Speech Services" {
+  [Voice Activity Detection] as VAD
+  [Transcription Service] as ASR
+}
+
+package "Chatbot Orchestrator" {
+  [Intent Router] as IR
+  [Dialog Manager] as DM
+}
+
+package "Tools" {
+  [Search Service] as SRCH
+  [Conversion Orchestrator] as CONV
+  [Summarization Service] as SUM
+}
+
+V --> VAD
+VAD --> ASR
+ASR --> IR
+T --> IR
+IR --> DM
+DM --> SRCH
+DM --> CONV
+DM --> SUM
+@enduml
