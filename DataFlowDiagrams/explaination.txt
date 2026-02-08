@@ -1,0 +1,26 @@
+DFD Explanation (YouTube-to-MP3 Application)
+
+Level 0 (Context)
+- Single process: "YouTube-to-MP3 System".
+- External entities: User, YouTube, Identity Provider (optional), Metadata DB (data store).
+- Inputs: Search/Chat/URL/Convert requests from User.
+- Outputs: Results/Status/MP3 to User.
+- External interactions: Search/Metadata with YouTube; Auth tokens with Identity Provider.
+- Data store: Metadata DB for download history and recommendations (no MP3 storage).
+
+Level 1 (Decomposition)
+1. Web UI: Collects user input, shows results and job status, triggers download.
+2. Chatbot Orchestrator: Interprets user intent and routes to search or conversion.
+3. Search Service: Uses YouTube Data API for search/metadata.
+4. Link Resolver: Validates URL and extracts video_id.
+5. Conversion Orchestrator: Creates jobs, enqueues, updates status, writes metadata.
+6. In-Memory Job Queue: Holds jobs; limits concurrency (free, demo-safe).
+7. Conversion Worker: Downloads via yt-dlp, converts via ffmpeg, reports status.
+8. File Delivery: Streams the MP3 back to the user from local downloads.
+9. Notification Service: Pushes job status updates to the UI.
+D1. Metadata DB: Stores user download history for recommendations.
+
+Notes
+- Conversion runs on backend; browser only sends requests and receives results.
+- MP3 files are stored locally in downloads/ and served directly; no S3 used.
+- Queue is in-memory for zero cost; can be replaced by Redis later.
