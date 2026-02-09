@@ -1,0 +1,24 @@
+@startuml
+left to right direction
+
+actor User
+actor "YouTube" as YouTube
+
+rectangle "SunLeo App" {
+  usecase "Search Video" as UCSearch
+  usecase "Request Convert" as UCConvert
+  usecase "Process Queue" as UCQueue
+  usecase "Download File" as UCDownload
+  usecase "Notify Ready" as UCNotify
+}
+
+User --> UCSearch
+User --> UCConvert
+User --> UCDownload
+UCConvert --> UCQueue
+UCQueue --> UCDownload
+UCDownload --> UCNotify
+UCSearch --> YouTube
+UCConvert --> YouTube
+
+@enduml

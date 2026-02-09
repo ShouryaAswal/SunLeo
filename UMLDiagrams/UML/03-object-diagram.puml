@@ -1,0 +1,34 @@
+@startuml
+object apiService {
+  name = "ApiService"
+}
+
+object converter {
+  name = "Converter"
+}
+
+object queueManager {
+  size = 3
+}
+
+object job1 {
+  id = "job-001"
+  url = "https://youtu.be/abc"
+  status = "processing"
+}
+
+object storage {
+  name = "Storage"
+}
+
+object notifier {
+  name = "Notifier"
+}
+
+apiService --> converter
+converter --> queueManager
+queueManager --> job1
+converter --> storage
+storage --> notifier
+
+@enduml

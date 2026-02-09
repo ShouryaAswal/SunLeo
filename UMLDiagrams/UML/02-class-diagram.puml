@@ -1,0 +1,83 @@
+@startuml
+skinparam classAttributeIconSize 0
+
+class ApiService {
+  -jobs: Dict[str, JobRecord]
+  -queue: InMemoryJobQueue
+  -downloadDir: Path
+  +healthz(): dict
+  +convert(request: ConvertRequest): ConvertResponse
+  +status(jobId: str): StatusResponse
+  +download(jobId: str): FileResponse
+  -processJob(jobId: str): void
+}
+
+class InMemoryJobQueue {
+  -_queue: asyncio.Queue[str]
+  -_workerTask: asyncio.Task
+  -_worker: Callable
+  -_running: bool
+  +enqueue(jobId: str): void
+  +start(worker: Callable): void
+  +stop(): void
+  -run(): void
+}
+
+class ConverterService {
+  +convertYouTubeToMp3(url: str, outputDir: Path): (Path, str?, str)
+}
+
+class YouTubeUrlUtils {
+  +extractVideoId(url: str): str?
+  +validateUrl(url: str): bool
+}
+
+class JobRecord {
+  +jobId: str
+  +url: str
+  +videoId: str
+  +status: JobStatus
+  +title: str?
+  +filePath: str?
+  +error: str?
+  +createdAt: datetime
+  +startedAt: datetime?
+  +finishedAt: datetime?
+}
+
+enum JobStatus {
+  queued
+  running
+  completed
+  failed
+}
+
+class ConvertRequest {
+  +youtubeUrl: str
+}
+
+class ConvertResponse {
+  +jobId: str
+  +status: JobStatus
+}
+
+class StatusResponse {
+  +jobId: str
+  +status: JobStatus
+  +title: str?
+  +error: str?
+  +downloadUrl: str?
+}
+
+ApiService "1" *-- "1" InMemoryJobQueue : owns
+ApiService "1" o-- "0..*" JobRecord : manages
+ApiService ..> ConverterService : uses
+ApiService ..> YouTubeUrlUtils : validates
+ApiService ..> ConvertRequest
+ApiService ..> ConvertResponse
+ApiService ..> StatusResponse
+JobRecord --> JobStatus
+ConvertResponse --> JobStatus
+StatusResponse --> JobStatus
+
+@enduml
