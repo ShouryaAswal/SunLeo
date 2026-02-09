@@ -6,6 +6,7 @@ actor "YouTube" as YouTube
 
 rectangle "SunLeo App" {
   usecase "Search Video" as UCSearch
+  usecase "Get Recommendations" as UCRecommend
   usecase "Request Convert" as UCConvert
   usecase "Process Queue" as UCQueue
   usecase "Download File" as UCDownload
@@ -13,6 +14,7 @@ rectangle "SunLeo App" {
 }
 
 User --> UCSearch
+User --> UCRecommend
 User --> UCConvert
 User --> UCDownload
 UCConvert --> UCQueue

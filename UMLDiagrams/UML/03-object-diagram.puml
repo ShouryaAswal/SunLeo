@@ -3,12 +3,24 @@ object apiService {
   name = "ApiService"
 }
 
-object converter {
-  name = "Converter"
+object searchService {
+  name = "SearchService"
+}
+
+object youtubeApiClient {
+  name = "YouTubeApiClient"
+}
+
+object recommendationService {
+  name = "RecommendationService"
+}
+
+object datasetRepo {
+  path = "dataset.csv"
 }
 
 object queueManager {
-  size = 3
+  size = 2
 }
 
 object job1 {
@@ -17,18 +29,11 @@ object job1 {
   status = "processing"
 }
 
-object storage {
-  name = "Storage"
-}
-
-object notifier {
-  name = "Notifier"
-}
-
-apiService --> converter
-converter --> queueManager
+apiService --> searchService
+searchService --> youtubeApiClient
+apiService --> recommendationService
+recommendationService --> datasetRepo
+apiService --> queueManager
 queueManager --> job1
-converter --> storage
-storage --> notifier
 
 @enduml

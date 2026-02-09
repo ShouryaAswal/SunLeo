@@ -6,9 +6,11 @@ class ApiService {
   -queue: InMemoryJobQueue
   -downloadDir: Path
   +healthz(): dict
+  +search(query: str): list
   +convert(request: ConvertRequest): ConvertResponse
   +status(jobId: str): StatusResponse
   +download(jobId: str): FileResponse
+  +recommend(userSongs: list): list
   -processJob(jobId: str): void
 }
 
@@ -25,6 +27,28 @@ class InMemoryJobQueue {
 
 class ConverterService {
   +convertYouTubeToMp3(url: str, outputDir: Path): (Path, str?, str)
+}
+
+class SearchService {
+  +searchYouTube(query: str): list
+  -buildQuery(query: str): dict
+}
+
+class YouTubeApiClient {
+  +search(queryParams: dict): list
+  #rateLimit(): void
+}
+
+class RecommendationService {
+  -scaler: StandardScaler
+  -features: list
+  +recommend(userSongs: list, topN: int): list
+  #computeSimilarity(userRows: list): list
+}
+
+class DatasetRepository {
+  -path: str
+  +load(): list
 }
 
 class YouTubeUrlUtils {
@@ -73,11 +97,15 @@ ApiService "1" *-- "1" InMemoryJobQueue : owns
 ApiService "1" o-- "0..*" JobRecord : manages
 ApiService ..> ConverterService : uses
 ApiService ..> YouTubeUrlUtils : validates
+ApiService ..> SearchService : uses
+ApiService ..> RecommendationService : uses
 ApiService ..> ConvertRequest
 ApiService ..> ConvertResponse
 ApiService ..> StatusResponse
 JobRecord --> JobStatus
 ConvertResponse --> JobStatus
 StatusResponse --> JobStatus
+SearchService "1" --> "1" YouTubeApiClient : uses
+RecommendationService "1" o-- "1" DatasetRepository : reads
 
 @enduml
