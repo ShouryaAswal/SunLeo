@@ -1,0 +1,14 @@
+UML diagrams for the SunLeo application
+
+01-use-case.png
+- Shows the main user interactions: search, convert, queue processing, download, and notification.
+- Includes the external YouTube actor to clarify the system boundary.
+
+02-class-diagram.png
+- Simplified view of key classes across API, conversion, search, and recommendation.
+- Uses visibility markers: public (+), private (-), and protected (#).
+- Shows relationships with cardinality, including composition for the queue and aggregation for jobs and dataset access.
+
+03-object-diagram.png
+- Provides a snapshot of a single conversion in progress.
+- Highlights an example Job instance moving through the queue and storage.

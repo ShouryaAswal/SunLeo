@@ -1,0 +1,39 @@
+@startuml
+object apiService {
+  name = "ApiService"
+}
+
+object searchService {
+  name = "SearchService"
+}
+
+object youtubeApiClient {
+  name = "YouTubeApiClient"
+}
+
+object recommendationService {
+  name = "RecommendationService"
+}
+
+object datasetRepo {
+  path = "dataset.csv"
+}
+
+object queueManager {
+  size = 2
+}
+
+object job1 {
+  id = "job-001"
+  url = "https://youtu.be/abc"
+  status = "processing"
+}
+
+apiService --> searchService
+searchService --> youtubeApiClient
+apiService --> recommendationService
+recommendationService --> datasetRepo
+apiService --> queueManager
+queueManager --> job1
+
+@enduml
