@@ -40,3 +40,7 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Audio File
+.mp3
+.webm
