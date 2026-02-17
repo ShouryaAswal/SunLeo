@@ -1,6 +1,5 @@
 import streamlit as st
 import yt_dlp
-import os
 
 st.set_page_config(page_title="Sun Leo", layout="wide")
 
@@ -23,7 +22,6 @@ section[data-testid="stSidebar"] {
     border-right: 1px solid #1f6feb;
 }
 
-/* Hover expand illusion */
 section[data-testid="stSidebar"]:hover {
     width: 300px !important;
 }
@@ -43,6 +41,19 @@ div[data-baseweb="input"] > div {
 
 div[data-baseweb="input"] input {
     color: white !important;
+}
+
+.playlist-card {
+    background-color: #111827;
+    padding: 10px;
+    border-radius: 15px;
+    border: 1px solid #1f6feb;
+    transition: 0.3s;
+}
+
+.playlist-card:hover {
+    box-shadow: 0 0 20px #1f6feb;
+    transform: scale(1.03);
 }
 
 </style>
@@ -105,18 +116,23 @@ st.button("Search")
 
 st.write("---")
 
-# ---------------- TRENDING ----------------
+# ---------------- TRENDING PLAYLISTS ----------------
 st.subheader("Trending Playlists")
 
+playlists = [
+    ("Top Hits", "https://images.unsplash.com/photo-1511376777868-611b54f68947?w=600"),
+    ("Night Vibes", "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=600"),
+    ("Upbeat Mix", "https://images.unsplash.com/photo-1492724441997-5dc865305da7?w=600"),
+    ("Jazz Essentials", "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600"),
+]
+
 cols = st.columns(4)
-playlists = ["Top Hits", "Night Vibes", "Upbeat Mix", "Jazz Essentials"]
 
-for i, col in enumerate(cols):
+for col, (name, img_url) in zip(cols, playlists):
     with col:
-        st.image(f"https://picsum.photos/200/200?random={i}")
-        st.write(playlists[i])
+        st.image(img_url, use_container_width=True)
+        st.markdown(f"<div style='text-align:center; margin-top:8px;'>{name}</div>", unsafe_allow_html=True)
 
-st.write("---")
 
 # ---------------- YOUTUBE DOWNLOAD (NO LOGIN REQUIRED) ----------------
 st.subheader("Download from YouTube")
@@ -128,26 +144,22 @@ if st.button("Download Audio"):
         with st.spinner("Downloading..."):
 
             ydl_opts = {
-                'format': 'bestaudio/best',
+                'format': 'bestaudio',
                 'outtmpl': 'downloaded_audio.%(ext)s',
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }],
             }
 
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([youtube_url])
+                    info = ydl.extract_info(youtube_url, download=True)
+                    filename = ydl.prepare_filename(info)
 
                 st.success("Download complete!")
 
-                with open("downloaded_audio.mp3", "rb") as f:
+                with open(filename, "rb") as f:
                     st.download_button(
                         label="Click to Download File",
                         data=f,
-                        file_name="sunleo_song.mp3",
+                        file_name=filename,
                         mime="audio/mpeg"
                     )
 
