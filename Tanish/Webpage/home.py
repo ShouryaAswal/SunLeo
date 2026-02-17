@@ -61,7 +61,16 @@ with st.sidebar:
 
         if feature == "Player":
             st.subheader("Music Player")
-            st.audio("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3")
+
+            if "last_downloaded" in st.session_state:
+                file_path = st.session_state["last_downloaded"]
+
+                if os.path.exists(file_path):
+                    st.audio(file_path)
+                else:
+                    st.warning("Downloaded file not found.")
+            else:
+                st.info("Download a song first to play it here.")
 
         elif feature == "Chatbot":
             st.subheader("Playlist Chatbot")
@@ -79,7 +88,7 @@ with st.sidebar:
         st.warning("Login to unlock features")
 
 # ---------------- HEADER ----------------
-col1, col2 = st.columns([8,1])
+col1, col2 = st.columns([8, 1])
 
 with col1:
     st.markdown("<h1>Welcome to Sun Leo</h1>", unsafe_allow_html=True)
@@ -112,7 +121,10 @@ cols = st.columns(4)
 for col, (name, img_url) in zip(cols, playlists):
     with col:
         st.image(img_url, use_container_width=True)
-        st.markdown(f"<div style='text-align:center; margin-top:8px;'>{name}</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div style='text-align:center; margin-top:8px;'>{name}</div>",
+            unsafe_allow_html=True
+        )
 
 st.write("---")
 
@@ -140,6 +152,8 @@ if st.button("Download MP3"):
                     info = ydl.extract_info(youtube_url, download=True)
                     title = info.get("title", "audio")
                     filename = f"{title}.mp3"
+
+                st.session_state["last_downloaded"] = filename
 
                 st.success("MP3 Download Complete!")
 
