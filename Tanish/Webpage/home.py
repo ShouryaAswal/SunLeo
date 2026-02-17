@@ -1,5 +1,6 @@
 import streamlit as st
 import yt_dlp
+import os
 
 st.set_page_config(page_title="Sun Leo", layout="wide")
 
@@ -41,19 +42,6 @@ div[data-baseweb="input"] > div {
 
 div[data-baseweb="input"] input {
     color: white !important;
-}
-
-.playlist-card {
-    background-color: #111827;
-    padding: 10px;
-    border-radius: 15px;
-    border: 1px solid #1f6feb;
-    transition: 0.3s;
-}
-
-.playlist-card:hover {
-    box-shadow: 0 0 20px #1f6feb;
-    transform: scale(1.03);
 }
 
 </style>
@@ -109,13 +97,6 @@ with col2:
 
 st.write("---")
 
-# ---------------- SEARCH ----------------
-st.subheader("Search")
-st.text_input("Search songs or artists")
-st.button("Search")
-
-st.write("---")
-
 # ---------------- TRENDING PLAYLISTS ----------------
 st.subheader("Trending Playlists")
 
@@ -133,31 +114,38 @@ for col, (name, img_url) in zip(cols, playlists):
         st.image(img_url, use_container_width=True)
         st.markdown(f"<div style='text-align:center; margin-top:8px;'>{name}</div>", unsafe_allow_html=True)
 
+st.write("---")
 
-# ---------------- YOUTUBE DOWNLOAD (NO LOGIN REQUIRED) ----------------
-st.subheader("Download from YouTube")
+# ---------------- YOUTUBE DOWNLOAD WITH MP3 CONVERSION ----------------
+st.subheader("Download from YouTube (MP3)")
 
 youtube_url = st.text_input("Paste YouTube Link")
 
-if st.button("Download Audio"):
+if st.button("Download MP3"):
     if youtube_url:
-        with st.spinner("Downloading..."):
+        with st.spinner("Downloading and converting to MP3..."):
 
             ydl_opts = {
-                'format': 'bestaudio',
-                'outtmpl': 'downloaded_audio.%(ext)s',
+                'format': 'bestaudio/best',
+                'outtmpl': '%(title)s.%(ext)s',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
             }
 
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(youtube_url, download=True)
-                    filename = ydl.prepare_filename(info)
+                    title = info.get("title", "audio")
+                    filename = f"{title}.mp3"
 
-                st.success("Download complete!")
+                st.success("MP3 Download Complete!")
 
                 with open(filename, "rb") as f:
                     st.download_button(
-                        label="Click to Download File",
+                        label="Click to Download MP3",
                         data=f,
                         file_name=filename,
                         mime="audio/mpeg"
