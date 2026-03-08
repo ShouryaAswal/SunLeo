@@ -1,14 +1,25 @@
-
+# ============================================
+# Language-Aware Music Recommendation System
+# Case-Insensitive Input
+# Hindi → Hindi | English → English
+# No Duplicate Songs
+# ============================================
 
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics.pairwise import cosine_similarity
 
+# ------------------------------------------------
 # 1. LOAD DATASET
-
+# ------------------------------------------------
 df = pd.read_csv("dataset.csv")
 
+# Make lowercase copy for matching
+df["track_name_lower"] = df["track_name"].str.lower()
+
+# ------------------------------------------------
 # 2. AUDIO FEATURES
+# ------------------------------------------------
 features = [
     "danceability", "energy", "loudness", "speechiness",
     "acousticness", "instrumentalness",
@@ -17,16 +28,20 @@ features = [
 
 df = df.dropna(subset=features).reset_index(drop=True)
 
-# 3. LANGUAGE DETECTION (RULE-BASED)
+# ------------------------------------------------
+# 3. LANGUAGE DETECTION
+# ------------------------------------------------
 def detect_language(row):
+
     genre = str(row["track_genre"]).lower()
     artist = str(row["artists"]).lower()
 
     if any(w in genre for w in ["indian", "bollywood", "desi"]):
         return "hindi"
+
     if any(w in artist for w in [
-        "arijit", "atif", "shreya", "rahat",
-        "neha", "sonu", "udit", "kk"
+        "arijit","atif","shreya","rahat",
+        "neha","sonu","udit","kk"
     ]):
         return "hindi"
 
@@ -34,28 +49,33 @@ def detect_language(row):
 
 df["language"] = df.apply(detect_language, axis=1)
 
+# ------------------------------------------------
 # 4. NORMALIZE FEATURES
+# ------------------------------------------------
 scaler = StandardScaler()
 X = scaler.fit_transform(df[features])
 
+# ------------------------------------------------
 # 5. RECOMMENDATION FUNCTION
+# ------------------------------------------------
 def recommend_songs(user_songs, top_n=10):
 
-    user_rows = df[df["track_name"].isin(user_songs)]
+    # Convert user songs to lowercase
+    user_songs_lower = [s.lower() for s in user_songs]
+
+    user_rows = df[df["track_name_lower"].isin(user_songs_lower)]
 
     if user_rows.empty:
         print("❌ Songs not found in dataset")
         return None
 
-    # Detect user language (majority)
     user_language = user_rows["language"].mode()[0]
 
-    # Filter by same language
     filtered_df = df[df["language"] == user_language]
     filtered_X = X[filtered_df.index]
 
     user_indices = filtered_df[
-        filtered_df["track_name"].isin(user_songs)
+        filtered_df["track_name_lower"].isin(user_songs_lower)
     ].index
 
     similarity = cosine_similarity(
@@ -68,8 +88,8 @@ def recommend_songs(user_songs, top_n=10):
     recommendations = (
         filtered_df.assign(score=avg_similarity)
         .sort_values("score", ascending=False)
-        .drop_duplicates(subset="track_name")   # ✅ REMOVE DUPLICATES
-        .loc[~filtered_df["track_name"].isin(user_songs)]
+        .drop_duplicates(subset="track_name")   # remove repeats
+        .loc[~filtered_df["track_name_lower"].isin(user_songs_lower)]
         .head(top_n)
     )
 
@@ -77,21 +97,23 @@ def recommend_songs(user_songs, top_n=10):
         ["track_name", "artists", "track_genre", "language", "score"]
     ]
 
+# ------------------------------------------------
 # 6. TEST
-
+# ------------------------------------------------
 if __name__ == "__main__":
 
     user_likes = [
-        "Tum Hi Ho",     # Hindi
-        "kesariya"       # English (language decided by majority)
+        "tum hi ho",
+        "BELIEVER"
     ]
 
     results = recommend_songs(user_likes, top_n=10)
 
     if results is not None:
         print("\n🎧 Recommended Songs:\n")
+
         for _, row in results.iterrows():
             print(
-                f"{row['track_name']}  -  {row['artists']} "
+                f"{row['track_name']} - {row['artists']} "
                 f"[{row['language'].upper()}]"
             )
