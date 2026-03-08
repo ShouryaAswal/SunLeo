@@ -1,9 +1,9 @@
-# ============================================
+
 # Language-Aware Music Recommendation System
 # Case-Insensitive Input
 # Hindi → Hindi | English → English
 # No Duplicate Songs
-# ============================================
+
 
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
@@ -117,3 +117,4 @@ if __name__ == "__main__":
                 f"{row['track_name']} - {row['artists']} "
                 f"[{row['language'].upper()}]"
             )
+
