@@ -234,28 +234,4 @@ Suitable for College Project Optional Highly Recommended
 
 ---
 
-# Final Recommendation
 
-For academic demonstration purposes:
-
-- Use Render for free, simple deployment.
-- Mention AWS architecture in report for professional explanation.
-- Demonstrate live working app via Render link.
-  CS331_Assignment5_Hosting_Guide.md
-  Displaying CS331_Assignment5_Hosting_Guide.md.
-  Assignment 5
-  Shubha Brata Nath
-  •
-  17 Feb (Edited 17 Feb)
-  100 points
-  Due 2 Mar, 23:59
-  Assignment5_Software_Engineering_Lab.pdf
-  PDF
-
-Class comments
-Your work
-Handed in
-CS331_Assignment5_Hosting_Guide.md
-Text
-
-Private comments
