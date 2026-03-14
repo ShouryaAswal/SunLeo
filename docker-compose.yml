@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  # ---------------------------------------------
+  # Frontend Web UI (Streamlit)
+  # ---------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    environment:
+      # Future: Add Backend API endpoint
+      # - API_GATEWAY_URL=http://api-gateway:8000
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./frontend/app:/app/app       # Hot reloading for local development
+      - ./frontend/assets:/app/assets
+    depends_on:
+      # - api-gateway
+      # - ytconverter
+      - redis
+    command: streamlit run app/home.py --server.port=8501 --server.address=0.0.0.0
+
+  # ---------------------------------------------
+  # Message Broker/Cache (Redis)
+  # Central dependency for async task queues and rate limiting
+  # ---------------------------------------------
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+
+  # ---------------------------------------------
+  # Conversion Service Worker (yt-dlp + FFmpeg)
+  # ---------------------------------------------
+  ytconverter:
+    build:
+      context: ./backend/ytconverter
+    # No ports exposed externally as this is an async background worker
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./backend/ytconverter/downloads:/app/downloads
+    depends_on:
+      - redis
+
+  # Additional Microservices will be added below as they are developed
+  # (api-gateway, search-service, recommendation-service, etc.)
