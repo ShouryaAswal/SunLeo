@@ -24,6 +24,8 @@ def convert_youtube_to_mp3(url: str, output_dir: Path) -> Tuple[Path, Optional[s
             "outtmpl": str(tmp_path / "%(id)s.%(ext)s"),
             "quiet": True,
             "no_warnings": True,
+            "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+            "nocheckcertificate": True,
             "postprocessors": [
                 {
                     "key": "FFmpegExtractAudio",

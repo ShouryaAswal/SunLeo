@@ -44,3 +44,9 @@ Thumbs.db
 # Audio Files
 *.mp3
 *.webm
+# Video / Downloader temp files
+*.mp4
+*.part
+*.ytdl
+*.mkv
+backend/ytconverter/downloads/
