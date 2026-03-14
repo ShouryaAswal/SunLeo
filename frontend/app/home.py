@@ -62,9 +62,12 @@ with st.sidebar:
         if feature == "Player":
             st.subheader("Music Player")
 
-            if "last_downloaded" in st.session_state:
+            if "last_downloaded_url" in st.session_state:
+                file_url = st.session_state["last_downloaded_url"]
+                st.audio(file_url)
+            elif "last_downloaded" in st.session_state:
+                # legacy local file logic
                 file_path = st.session_state["last_downloaded"]
-
                 if os.path.exists(file_path):
                     st.audio(file_path)
                 else:
@@ -129,44 +132,81 @@ for col, (name, img_url) in zip(cols, playlists):
 st.write("---")
 
 # ---------------- YOUTUBE DOWNLOAD WITH MP3 CONVERSION ----------------
-st.subheader("Download from YouTube (MP3)")
+st.subheader("Batch Download from YouTube (MP3)")
 
-youtube_url = st.text_input("Paste YouTube Link")
+urls_text = st.text_area("Paste YouTube Links (one per line, up to 10)")
 
-if st.button("Download MP3"):
-    if youtube_url:
-        with st.spinner("Downloading and converting to MP3..."):
+API_BASE_URL = os.getenv("API_GATEWAY_URL", "http://127.0.0.1:8000")
 
-            ydl_opts = {
-                'format': 'bestaudio/best',
-                'outtmpl': '%(title)s.%(ext)s',
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }],
-            }
-
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(youtube_url, download=True)
-                    title = info.get("title", "audio")
-                    filename = f"{title}.mp3"
-
-                st.session_state["last_downloaded"] = filename
-
-                st.success("MP3 Download Complete!")
-
-                with open(filename, "rb") as f:
-                    st.download_button(
-                        label="Click to Download MP3",
-                        data=f,
-                        file_name=filename,
-                        mime="audio/mpeg"
-                    )
-
-            except Exception as e:
-                st.error(f"Error: {e}")
-
+if st.button("Download MP3s"):
+    urls = [url.strip() for url in urls_text.split('\n') if url.strip()]
+    if not urls:
+         st.warning("Please paste at least one valid YouTube link.")
+    elif len(urls) > 10:
+         st.warning("Maximum 10 URLs are allowed per batch.")
     else:
-        st.warning("Please paste a valid YouTube link.")
+        import requests
+        import time
+        
+        with st.spinner("Submitting batch request to Conversion Service..."):
+            try:
+                response = requests.post(
+                    f"{API_BASE_URL}/convert/batch", 
+                    json={"urls": urls},
+                    timeout=10
+                )
+                if response.status_code != 200:
+                    st.error(f"Error from service: {response.text}")
+                else:
+                    data = response.json()
+                    jobs = data.get("jobs", [])
+                    st.success(f"Successfully queued {len(jobs)} jobs!")
+                    
+                    # Store jobs in session state to poll them
+                    st.session_state["active_jobs"] = jobs
+                    
+            except Exception as e:
+                st.error(f"Failed to connect to backend: {str(e)}")
+
+# Poll and Display Job Status
+if "active_jobs" in st.session_state and st.session_state["active_jobs"]:
+    st.write("### Download Status:")
+    import requests
+    import time
+    
+    jobs = st.session_state["active_jobs"]
+    all_completed = True
+    
+    for idx, job in enumerate(jobs):
+        job_id = job["job_id"]
+        
+        # Poll status
+        try:
+            status_resp = requests.get(f"{API_BASE_URL}/status/{job_id}", timeout=5)
+            if status_resp.status_code == 200:
+                s_data = status_resp.json()
+                status = s_data["status"]
+                title = s_data.get("title") or job.get("url")
+                
+                col1, col2 = st.columns([3, 1])
+                col1.write(f"**{title}** - Status: `{status}`")
+                
+                if status == "completed":
+                    # Update feature player state if it's the first completed
+                    if "last_downloaded_url" not in st.session_state:
+                         st.session_state["last_downloaded_url"] = f"{API_BASE_URL}{s_data['download_url']}"
+                         
+                    col2.markdown(f"[Download MP3]({API_BASE_URL}{s_data['download_url']})")
+                elif status == "failed":
+                    col2.error("Failed")
+                else:
+                    col2.info("Processing...")
+                    all_completed = False
+            else:
+                st.error(f"Failed to get status for {job_id}")
+        except Exception:
+            st.error(f"Cannot reach backend to check {job_id}")
+            
+    if not all_completed:
+        time.sleep(3)
+        st.rerun()

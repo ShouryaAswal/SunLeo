@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 from .converter import convert_youtube_to_mp3
-from .models import ConvertRequest, ConvertResponse, JobRecord, JobStatus, StatusResponse
+from .models import BatchConvertRequest, BatchConvertResponse, ConvertRequest, ConvertResponse, JobRecord, JobStatus, StatusResponse
 from .queue import InMemoryJobQueue
 from .utils import extract_video_id, validate_youtube_url
 
@@ -68,7 +68,26 @@ async def convert(request: ConvertRequest):
     jobs[job_id] = JobRecord(job_id=job_id, url=request.youtube_url, video_id=video_id)
     await queue.enqueue(job_id)
 
-    return ConvertResponse(job_id=job_id, status=JobStatus.queued)
+    return ConvertResponse(job_id=job_id, status=JobStatus.queued, url=request.youtube_url)
+
+
+@app.post("/convert/batch", response_model=BatchConvertResponse)
+async def convert_batch(request: BatchConvertRequest):
+    if len(request.urls) > 10:
+        raise HTTPException(status_code=400, detail="Maximum 10 URLs allowed per batch")
+        
+    responses = []
+    for url in request.urls:
+        if not validate_youtube_url(url):
+            raise HTTPException(status_code=400, detail=f"Invalid YouTube URL: {url}")
+            
+        job_id = uuid4().hex
+        video_id = extract_video_id(url) or "unknown"
+        jobs[job_id] = JobRecord(job_id=job_id, url=url, video_id=video_id)
+        await queue.enqueue(job_id)
+        responses.append(ConvertResponse(job_id=job_id, status=JobStatus.queued, url=url))
+
+    return BatchConvertResponse(jobs=responses)
 
 
 @app.get("/status/{job_id}", response_model=StatusResponse)

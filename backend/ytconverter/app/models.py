@@ -18,10 +18,16 @@ class JobStatus(str, Enum):
 class ConvertRequest(BaseModel):
     youtube_url: str = Field(..., description="YouTube URL")
 
+class BatchConvertRequest(BaseModel):
+    urls: list[str] = Field(..., max_length=10, description="List of YouTube URLs (up to 10)")
 
 class ConvertResponse(BaseModel):
     job_id: str
     status: JobStatus
+    url: str
+
+class BatchConvertResponse(BaseModel):
+    jobs: list[ConvertResponse]
 
 
 class StatusResponse(BaseModel):

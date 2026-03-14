@@ -11,8 +11,8 @@ services:
     ports:
       - "8501:8501"
     environment:
-      # Future: Add Backend API endpoint
-      # - API_GATEWAY_URL=http://api-gateway:8000
+      # Use ytconverter container directly as the gateway for now
+      - API_GATEWAY_URL=http://localhost:8000
       - PYTHONUNBUFFERED=1
     volumes:
       - ./frontend/app:/app/app       # Hot reloading for local development
@@ -38,7 +38,8 @@ services:
   ytconverter:
     build:
       context: ./backend/ytconverter
-    # No ports exposed externally as this is an async background worker
+    ports:
+      - "8000:8000"
     environment:
       - REDIS_URL=redis://redis:6379/0
     volumes:
