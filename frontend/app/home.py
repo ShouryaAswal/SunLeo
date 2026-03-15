@@ -64,7 +64,9 @@ with st.sidebar:
 
             if "last_downloaded_url" in st.session_state:
                 file_url = st.session_state["last_downloaded_url"]
+                title = st.session_state.get("last_downloaded_title", "Playing Audio...")
                 
+                st.markdown(f"**Now Playing:** {title}")
                 try:
                     import requests
                     # Streamlit st.audio allows full seeking/scrubbing when provided raw bytes instead of a URL
@@ -204,11 +206,14 @@ if "active_jobs" in st.session_state and st.session_state["active_jobs"]:
                 col1.write(f"**{title}** - Status: `{status}`")
                 
                 if status == "completed":
-                    # Update feature player state if it's the first completed
-                    if "last_downloaded_url" not in st.session_state:
+                    # Store url and title globally in state when finished
+                    if "last_downloaded_url" not in st.session_state or st.session_state["last_downloaded_url"] != f"{API_BASE_URL}{s_data['download_url']}":
                          st.session_state["last_downloaded_url"] = f"{API_BASE_URL}{s_data['download_url']}"
+                         st.session_state["last_downloaded_title"] = title
+                         # Force the UI to refresh immediately to update the sidebar Music Player
+                         st.rerun()
                          
-                    col2.markdown(f"[Download MP3]({API_BASE_URL}{s_data['download_url']})")
+                    col2.success("Ready in Player!")
                 elif status == "failed":
                     col2.error("Failed")
                 else:
