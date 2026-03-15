@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,11 +46,36 @@ async def _process_job(job_id: str) -> None:
         job.finished_at = datetime.now(timezone.utc)
 
 
+async def _cleanup_old_files_task():
+    """Background task to delete MP3 files older than 1 hour (3600 seconds)"""
+    while True:
+        try:
+            now = time.time()
+            for file_path in DOWNLOAD_DIR.glob("*.mp3"):
+                if file_path.is_file():
+                    file_age = now - file_path.stat().st_mtime
+                    if file_age > 3600:  # 1 hour
+                        os.remove(file_path)
+            
+            # Additional cleanup of in-memory job status tracker to prevent memory leaks over time
+            job_ids_to_remove = []
+            for j_id, jobr in jobs.items():
+                if jobr.finished_at and (datetime.now(timezone.utc) - jobr.finished_at).total_seconds() > 3600:
+                    job_ids_to_remove.append(j_id)
+            for j_id in job_ids_to_remove:
+                del jobs[j_id]
+                
+        except Exception:
+            pass
+        await asyncio.sleep(600)  # run cleanup check every 10 minutes
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     queue.start(_process_job)
+    cleanup_task = asyncio.create_task(_cleanup_old_files_task())
     yield
+    cleanup_task.cancel()
     await queue.stop()
 
 
