@@ -1,58 +1,59 @@
-﻿.venv/
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-*.so
-*.dylib
-*.dll
-*.egg-info/
-.eggs/
-build/
-dist/
-.pytest_cache/
-.mypy_cache/
-.coverage
-.coverage.*
-htmlcov/
-.mypy_cache/
-ruff_cache/
-.pyre/
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Node
-node_modules/
-
-# Logs
-*.log
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Editor
-.vscode/
-.idea/
-
-# Env files
-.env
-.env.*
-!.env.example
-
-# Audio Files
-*.mp3
-*.webm
-# Video / Downloader temp files
-*.mp4
-*.part
-*.ytdl
-*.mkv
-backend/ytconverter/downloads/
-frontend/app/google_secret.json
-
-
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dylib
+*.dll
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+ruff_cache/
+.pyre/
 
+# Jupyter
+.ipynb_checkpoints/
+
+# Node
+node_modules/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Env files
+.env
+.env.*
+!.env.example
+*/.env
+
+# Secret JSON
+*google_secret*.json
 google_secret.json
-*.json
+
+# Audio Files
+*.mp3
+*.webm
+
+# Video / Downloader temp files
+*.mp4
+*.part
+*.ytdl
+*.mkv
+
+# Application specifics
+backend/ytconverter/downloads/
