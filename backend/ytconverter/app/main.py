@@ -22,7 +22,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 DOWNLOAD_DIR = BASE_DIR / "downloads"
 
 jobs: Dict[str, JobRecord] = {}
-queue = InMemoryJobQueue()
+queue = InMemoryJobQueue(concurrency=3)
 
 
 async def _process_job(job_id: str) -> None:
