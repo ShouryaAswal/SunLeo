@@ -29,12 +29,13 @@ async def _process_job(job_id: str) -> None:
     job.started_at = datetime.now(timezone.utc)
 
     try:
-        output_path, title, video_id = await asyncio.to_thread(
+        output_path, title, video_id, metadata = await asyncio.to_thread(
             convert_youtube_to_mp3, job.url, DOWNLOAD_DIR
         )
         job.file_path = str(output_path)
         job.title = title
         job.video_id = video_id
+        job.metadata = metadata
         job.status = JobStatus.completed
     except Exception as exc:
         job.status = JobStatus.failed
@@ -115,6 +116,7 @@ async def status(job_id: str):
         title=job.title,
         error=job.error,
         download_url=download_url,
+        metadata=job.metadata,
     )
 
 

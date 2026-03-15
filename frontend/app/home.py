@@ -7,6 +7,12 @@ st.set_page_config(page_title="Sun Leo", layout="wide")
 # ---------------- SESSION STATE ----------------
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
+    
+if "library" not in st.session_state:
+    st.session_state.library = []  # will hold dicts of {url, title, metadata}
+    
+if "auto_refresh_trigger" not in st.session_state:
+    st.session_state.auto_refresh_trigger = False
 
 # ---------------- STYLING ----------------
 st.markdown("""
@@ -62,18 +68,35 @@ with st.sidebar:
         if feature == "Player":
             st.subheader("Music Player")
 
-            if "last_downloaded_url" in st.session_state:
-                file_url = st.session_state["last_downloaded_url"]
-                title = st.session_state.get("last_downloaded_title", "Playing Audio...")
+            if st.session_state.library:
+                # Create a selection box of all downloaded songs
+                song_titles = [song["title"] for song in st.session_state.library]
+                selected_title = st.selectbox("Select a song to play:", song_titles)
                 
-                st.markdown(f"**Now Playing:** {title}")
+                # Find the matched song object
+                selected_song = next(song for song in st.session_state.library if song["title"] == selected_title)
+                
+                file_url = selected_song["url"]
+                metadata = selected_song.get("metadata", {})
+                
+                st.markdown(f"**Now Playing:** {selected_song['title']}")
+                if metadata:
+                     st.caption(f"👤 {metadata.get('uploader', 'Unknown')} | 👁️ {metadata.get('view_count', 0):,} views")
+                
                 try:
                     import requests
-                    # Streamlit st.audio allows full seeking/scrubbing when provided raw bytes instead of a URL
-                    # We fetch the MP3 dynamically from the backend and pipe the bytes into Streamlit
                     response = requests.get(file_url, stream=True)
                     if response.status_code == 200:
                         st.audio(response.content, format="audio/mp3")
+                        
+                        # Provide a direct download button for the user's hard drive
+                        st.download_button(
+                            label="📥 Download to PC",
+                            data=response.content,
+                            file_name=f"{selected_song['title']}.mp3",
+                            mime="audio/mpeg",
+                            use_container_width=True
+                        )
                     else:
                         st.error("Failed to load audio from server.")
                 except Exception as e:
@@ -206,13 +229,19 @@ if "active_jobs" in st.session_state and st.session_state["active_jobs"]:
                 col1.write(f"**{title}** - Status: `{status}`")
                 
                 if status == "completed":
-                    # Store url and title globally in state when finished
-                    if "last_downloaded_url" not in st.session_state or st.session_state["last_downloaded_url"] != f"{API_BASE_URL}{s_data['download_url']}":
-                         st.session_state["last_downloaded_url"] = f"{API_BASE_URL}{s_data['download_url']}"
-                         st.session_state["last_downloaded_title"] = title
-                         # Force the UI to refresh immediately to update the sidebar Music Player
-                         st.rerun()
-                         
+                    full_url = f"{API_BASE_URL}{s_data['download_url']}"
+                    metadata = s_data.get("metadata", {})
+                    
+                    # Add to session library if not already there
+                    if not any(song["url"] == full_url for song in st.session_state.library):
+                         st.session_state.library.append({
+                             "url": full_url,
+                             "title": title,
+                             "metadata": metadata
+                         })
+                         # Tell Streamlit it needs to refresh the sidebar once all polling is done
+                         st.session_state.auto_refresh_trigger = True
+
                     col2.success("Ready in Player!")
                 elif status == "failed":
                     col2.error("Failed")
@@ -226,4 +255,7 @@ if "active_jobs" in st.session_state and st.session_state["active_jobs"]:
             
     if not all_completed:
         time.sleep(3)
+        st.rerun()
+    elif st.session_state.auto_refresh_trigger:
+        st.session_state.auto_refresh_trigger = False
         st.rerun()

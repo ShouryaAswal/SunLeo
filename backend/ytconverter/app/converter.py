@@ -13,9 +13,11 @@ def _ensure_ffmpeg() -> None:
         raise RuntimeError("ffmpeg not found on PATH. Install ffmpeg and try again.")
 
 
-def convert_youtube_to_mp3(url: str, output_dir: Path) -> Tuple[Path, Optional[str], str]:
+def convert_youtube_to_mp3(url: str, output_dir: Path) -> Tuple[Path, Optional[str], str, dict]:
     _ensure_ffmpeg()
     output_dir.mkdir(parents=True, exist_ok=True)
+    
+    metadata = {}
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
@@ -31,14 +33,29 @@ def convert_youtube_to_mp3(url: str, output_dir: Path) -> Tuple[Path, Optional[s
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
                     "preferredquality": "192",
+                },
+                {
+                    "key": "FFmpegMetadata"
                 }
             ],
+            "writethumbnail": False
         }
 
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             video_id = info.get("id")
             title = info.get("title")
+            
+            # Extract extended rich metadata
+            metadata = {
+                "title": title,
+                "uploader": info.get("uploader", "Unknown"),
+                "duration": info.get("duration", 0),  # in seconds
+                "upload_date": info.get("upload_date", "Unknown"),
+                "view_count": info.get("view_count", 0),
+                "thumbnail": info.get("thumbnail", ""),
+            }
+            
             input_path = Path(ydl.prepare_filename(info))
 
         if not video_id:
@@ -51,4 +68,4 @@ def convert_youtube_to_mp3(url: str, output_dir: Path) -> Tuple[Path, Optional[s
         final_path = output_dir / f"{video_id}.mp3"
         shutil.move(str(mp3_path), final_path)
 
-    return final_path, title, video_id
+    return final_path, title, video_id, metadata

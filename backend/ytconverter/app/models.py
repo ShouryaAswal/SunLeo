@@ -36,7 +36,7 @@ class StatusResponse(BaseModel):
     title: Optional[str] = None
     error: Optional[str] = None
     download_url: Optional[str] = None
-
+    metadata: Optional[dict] = None
 
 @dataclass
 class JobRecord:
@@ -47,6 +47,7 @@ class JobRecord:
     title: Optional[str] = None
     file_path: Optional[str] = None
     error: Optional[str] = None
+    metadata: Optional[dict] = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
