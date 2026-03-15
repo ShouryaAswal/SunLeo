@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from .converter import convert_youtube_to_mp3
 from .models import BatchConvertRequest, BatchConvertResponse, ConvertRequest, ConvertResponse, JobRecord, JobStatus, StatusResponse
@@ -51,6 +52,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="ytconverter", version="0.1.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/healthz")
@@ -118,4 +127,9 @@ async def download(job_id: str):
         raise HTTPException(status_code=409, detail="File not ready")
 
     filename = f"{job.title or job.video_id}.mp3"
-    return FileResponse(path=job.file_path, filename=filename, media_type="audio/mpeg")
+    return FileResponse(
+        path=job.file_path, 
+        filename=filename, 
+        media_type="audio/mpeg",
+        content_disposition_type="inline"
+    )

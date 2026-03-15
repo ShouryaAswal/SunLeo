@@ -64,7 +64,19 @@ with st.sidebar:
 
             if "last_downloaded_url" in st.session_state:
                 file_url = st.session_state["last_downloaded_url"]
-                st.audio(file_url)
+                
+                try:
+                    import requests
+                    # Streamlit st.audio allows full seeking/scrubbing when provided raw bytes instead of a URL
+                    # We fetch the MP3 dynamically from the backend and pipe the bytes into Streamlit
+                    response = requests.get(file_url, stream=True)
+                    if response.status_code == 200:
+                        st.audio(response.content, format="audio/mp3")
+                    else:
+                        st.error("Failed to load audio from server.")
+                except Exception as e:
+                    st.error(f"Cannot play audio: {e}")
+                    
             elif "last_downloaded" in st.session_state:
                 # legacy local file logic
                 file_path = st.session_state["last_downloaded"]
