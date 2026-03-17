@@ -1,0 +1,3 @@
+@echo off
+echo Starting SunLeo PowerShell Launcher...
+powershell.exe -ExecutionPolicy Bypass -File "%~dp0run_app.ps1"
