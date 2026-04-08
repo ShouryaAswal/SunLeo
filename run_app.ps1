@@ -31,15 +31,19 @@ Start-Sleep -Seconds 2
 
 $baseDir = Get-Location
 
-Write-Host "2. Starting Backend (Uvicorn) in a new window..."
-# Starts backend in a new Powershell Window
-Start-Process powershell.exe -ArgumentList "-NoExit -Command `"cd '$baseDir'; & '.\.venv\Scripts\Activate.ps1'; cd backend/ytconverter; uvicorn app.main:app --reload --port 8000`""
+Write-Host "2. Upgrading yt-dlp to latest version..."
+& ".venv\Scripts\pip.exe" install --upgrade yt-dlp --quiet 2>&1 | Out-Null
+Write-Host "   -> yt-dlp upgraded."
+
+Write-Host "3. Starting Backend (Uvicorn) in a new window..."
+# Starts backend in a new Powershell Window (no --reload to prevent killing ffmpeg mid-download)
+Start-Process powershell.exe -ArgumentList "-NoExit -Command `"cd '$baseDir'; & '.\.venv\Scripts\Activate.ps1'; cd backend/ytconverter; uvicorn app.main:app --port 8000`""
 Write-Host "   -> Backend launched."
 
 # Wait a few seconds to let the backend start up before starting the frontend
 Start-Sleep -Seconds 3
 
-Write-Host "3. Starting Frontend (Streamlit) in a new window..."
+Write-Host "4. Starting Frontend (Streamlit) in a new window..."
 # Starts frontend in a new Powershell Window
 Start-Process powershell.exe -ArgumentList "-NoExit -Command `"cd '$baseDir'; & '.\.venv\Scripts\Activate.ps1'; cd frontend; streamlit run app/home.py --server.port 8501`""
 Write-Host "   -> Frontend launched."
