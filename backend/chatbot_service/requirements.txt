@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+groq
+langchain
+langchain-groq
+requests
