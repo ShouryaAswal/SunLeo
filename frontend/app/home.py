@@ -1,18 +1,40 @@
 import streamlit as st
-import yt_dlp
 import os
+from pathlib import Path
+
+# ------------ LOAD .env FROM PROJECT ROOT ------------
+# home.py lives at frontend/app/home.py → project root is 2 levels up
+from dotenv import load_dotenv
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(_PROJECT_ROOT / ".env")
 
 st.set_page_config(page_title="Sun Leo", layout="wide")
 
+# ---------------- FIREBASE CONFIG ----------------
+FIREBASE_CONFIG = {
+    "apiKey": os.getenv("FIREBASE_API_KEY", ""),
+    "authDomain": os.getenv("FIREBASE_AUTH_DOMAIN", ""),
+    "projectId": os.getenv("FIREBASE_PROJECT_ID", ""),
+    "storageBucket": os.getenv("FIREBASE_STORAGE_BUCKET", ""),
+    "messagingSenderId": os.getenv("FIREBASE_MESSAGING_SENDER_ID", ""),
+    "appId": os.getenv("FIREBASE_APP_ID", ""),
+}
+
 # ---------------- SESSION STATE ----------------
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-    
 if "library" not in st.session_state:
-    st.session_state.library = []  # will hold dicts of {url, title, metadata}
-    
+    st.session_state.library = []
+
 if "auto_refresh_trigger" not in st.session_state:
     st.session_state.auto_refresh_trigger = False
+
+if "firebase_user" not in st.session_state:
+    st.session_state.firebase_user = None
+
+
+def is_logged_in():
+    return st.session_state.firebase_user is not None
+
 
 # ---------------- STYLING ----------------
 st.markdown("""
@@ -53,57 +75,97 @@ div[data-baseweb="input"] input {
 </style>
 """, unsafe_allow_html=True)
 
+
+# ============================================================
+#  FIREBASE AUTHENTICATION  (streamlit-firebase-auth package)
+# ============================================================
+def _init_firebase_auth():
+    """Initialise Firebase Auth and check session.
+    Returns the authenticated user dict or None."""
+    try:
+        from streamlit_firebase_auth import FirebaseAuth
+
+        auth = FirebaseAuth(firebase_config=FIREBASE_CONFIG)
+        user = auth.check_session()
+        return auth, user
+    except ImportError:
+        st.error(
+            "Firebase auth package not installed. "
+            "Run: `pip install streamlit-firebase-auth`"
+        )
+        return None, None
+    except Exception as e:
+        st.error(f"Firebase initialisation error: {e}")
+        return None, None
+
+
+auth_obj, session_user = _init_firebase_auth()
+
+# Sync to session state so pages can check auth
+if session_user and isinstance(session_user, dict) and session_user.get("email"):
+    st.session_state.firebase_user = session_user
+elif session_user is None:
+    st.session_state.firebase_user = None
+
+
 # ---------------- SIDEBAR ----------------
 with st.sidebar:
     st.title("🎵 Sun Leo")
 
-    if st.session_state.logged_in:
-        st.success("Logged in")
+    # --- Auth controls in sidebar ---
+    if is_logged_in():
+        user = st.session_state.firebase_user
+        st.success(
+            f"Logged in as {user.get('displayName', user.get('email', 'User'))}"
+        )
+        if auth_obj:
+            auth_obj.logout_form()
 
         feature = st.radio(
-            "Features",
-            ["Player", "Chatbot", "Create Playlist"]
+            "Features", ["Player", "Chatbot", "Create Playlist"]
         )
 
         if feature == "Player":
             st.subheader("Music Player")
 
             if st.session_state.library:
-                # Create a selection box of all downloaded songs
                 song_titles = [song["title"] for song in st.session_state.library]
                 selected_title = st.selectbox("Select a song to play:", song_titles)
-                
-                # Find the matched song object
-                selected_song = next(song for song in st.session_state.library if song["title"] == selected_title)
-                
+
+                selected_song = next(
+                    song
+                    for song in st.session_state.library
+                    if song["title"] == selected_title
+                )
+
                 file_url = selected_song["url"]
                 metadata = selected_song.get("metadata", {})
-                
+
                 st.markdown(f"**Now Playing:** {selected_song['title']}")
                 if metadata:
-                     st.caption(f"👤 {metadata.get('uploader', 'Unknown')} | 👁️ {metadata.get('view_count', 0):,} views")
-                
+                    st.caption(
+                        f"👤 {metadata.get('uploader', 'Unknown')} | "
+                        f"👁️ {metadata.get('view_count', 0):,} views"
+                    )
+
                 try:
                     import requests
+
                     response = requests.get(file_url, stream=True)
                     if response.status_code == 200:
                         st.audio(response.content, format="audio/mp3")
-                        
-                        # Provide a direct download button for the user's hard drive
                         st.download_button(
                             label="📥 Download to PC",
                             data=response.content,
                             file_name=f"{selected_song['title']}.mp3",
                             mime="audio/mpeg",
-                            use_container_width=True
                         )
                     else:
                         st.error("Failed to load audio from server.")
                 except Exception as e:
                     st.error(f"Cannot play audio: {e}")
-                    
+
             elif "last_downloaded" in st.session_state:
-                # legacy local file logic
                 file_path = st.session_state["last_downloaded"]
                 if os.path.exists(file_path):
                     st.audio(file_path)
@@ -126,6 +188,8 @@ with st.sidebar:
 
     else:
         st.warning("Login to unlock features")
+        st.info("👆 Use the login form on the main page to sign in.")
+
 
 # ---------------- HEADER ----------------
 col1, col2 = st.columns([8, 1])
@@ -135,16 +199,22 @@ with col1:
     st.markdown("Find the melody that moves you")
 
 with col2:
-    if not st.session_state.logged_in:
-        if st.button("Login"):
-            st.session_state.logged_in = True
-            st.rerun()
-    else:
+    if is_logged_in():
         if st.button("Logout"):
-            st.session_state.logged_in = False
+            st.session_state.firebase_user = None
             st.rerun()
 
 st.write("---")
+
+# ----------- LOGIN SECTION (shown when not logged in) -----------
+if not is_logged_in() and auth_obj:
+    st.subheader("🔐 Sign in to Sun Leo")
+    st.markdown(
+        "Sign in with your Google account or email to unlock "
+        "the player, chatbot, and playlist features."
+    )
+    auth_obj.login_form()
+    st.write("---")
 
 # ---------------- TRENDING PLAYLISTS ----------------
 st.subheader("Trending Playlists")
@@ -163,7 +233,7 @@ for col, (name, img_url) in zip(cols, playlists):
         st.image(img_url, use_container_width=True)
         st.markdown(
             f"<div style='text-align:center; margin-top:8px;'>{name}</div>",
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
 st.write("---")
@@ -176,21 +246,21 @@ urls_text = st.text_area("Paste YouTube Links (one per line, up to 10)")
 API_BASE_URL = os.getenv("API_GATEWAY_URL", "http://127.0.0.1:8000")
 
 if st.button("Download MP3s"):
-    urls = [url.strip() for url in urls_text.split('\n') if url.strip()]
+    urls = [url.strip() for url in urls_text.split("\n") if url.strip()]
     if not urls:
-         st.warning("Please paste at least one valid YouTube link.")
+        st.warning("Please paste at least one valid YouTube link.")
     elif len(urls) > 10:
-         st.warning("Maximum 10 URLs are allowed per batch.")
+        st.warning("Maximum 10 URLs are allowed per batch.")
     else:
         import requests
         import time
-        
+
         with st.spinner("Submitting batch request to Conversion Service..."):
             try:
                 response = requests.post(
-                    f"{API_BASE_URL}/convert/batch", 
+                    f"{API_BASE_URL}/convert/batch",
                     json={"urls": urls},
-                    timeout=10
+                    timeout=10,
                 )
                 if response.status_code != 200:
                     st.error(f"Error from service: {response.text}")
@@ -198,10 +268,8 @@ if st.button("Download MP3s"):
                     data = response.json()
                     jobs = data.get("jobs", [])
                     st.success(f"Successfully queued {len(jobs)} jobs!")
-                    
-                    # Store jobs in session state to poll them
                     st.session_state["active_jobs"] = jobs
-                    
+
             except Exception as e:
                 st.error(f"Failed to connect to backend: {str(e)}")
 
@@ -210,49 +278,53 @@ if "active_jobs" in st.session_state and st.session_state["active_jobs"]:
     st.write("### Download Status:")
     import requests
     import time
-    
+
     jobs = st.session_state["active_jobs"]
     all_completed = True
-    
+
     for idx, job in enumerate(jobs):
         job_id = job["job_id"]
-        
-        # Poll status
+
         try:
-            status_resp = requests.get(f"{API_BASE_URL}/status/{job_id}", timeout=5)
+            status_resp = requests.get(
+                f"{API_BASE_URL}/status/{job_id}", timeout=5
+            )
             if status_resp.status_code == 200:
                 s_data = status_resp.json()
                 status = s_data["status"]
                 title = s_data.get("title") or job.get("url")
-                
-                col1, col2 = st.columns([3, 1])
-                col1.write(f"**{title}** - Status: `{status}`")
-                
+
+                c1, c2 = st.columns([3, 1])
+                c1.write(f"**{title}** - Status: `{status}`")
+
                 if status == "completed":
                     full_url = f"{API_BASE_URL}{s_data['download_url']}"
                     metadata = s_data.get("metadata", {})
-                    
-                    # Add to session library if not already there
-                    if not any(song["url"] == full_url for song in st.session_state.library):
-                         st.session_state.library.append({
-                             "url": full_url,
-                             "title": title,
-                             "metadata": metadata
-                         })
-                         # Tell Streamlit it needs to refresh the sidebar once all polling is done
-                         st.session_state.auto_refresh_trigger = True
 
-                    col2.success("Ready in Player!")
+                    if not any(
+                        song["url"] == full_url
+                        for song in st.session_state.library
+                    ):
+                        st.session_state.library.append(
+                            {
+                                "url": full_url,
+                                "title": title,
+                                "metadata": metadata,
+                            }
+                        )
+                        st.session_state.auto_refresh_trigger = True
+
+                    c2.success("Ready in Player!")
                 elif status == "failed":
-                    col2.error("Failed")
+                    c2.error("Failed")
                 else:
-                    col2.info("Processing...")
+                    c2.info("Processing...")
                     all_completed = False
             else:
                 st.error(f"Failed to get status for {job_id}")
         except Exception:
             st.error(f"Cannot reach backend to check {job_id}")
-            
+
     if not all_completed:
         time.sleep(3)
         st.rerun()

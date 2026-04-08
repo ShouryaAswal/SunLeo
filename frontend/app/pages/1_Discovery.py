@@ -1,12 +1,16 @@
 import streamlit as st
 import requests
+from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
 st.set_page_config(page_title="Music Discovery", page_icon="🔍")
 
 # ----- AUTHENTICATION LOCK -----
-if not st.session_state.get('connected'):
+if not st.session_state.get('firebase_user'):
     st.warning("🔒 **Access Denied**: You must be logged in to access the Discovery & Recommendation portal.")
-    st.info("Please navigate to the **Login** page using the sidebar to authenticate via Google.")
+    st.info("Please navigate to the **Home** page and click the **Login** button to authenticate.")
     st.stop()  # Completely stops rendering the rest of the page
 # -------------------------------
 

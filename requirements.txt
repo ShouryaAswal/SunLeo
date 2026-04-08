@@ -7,5 +7,5 @@ ffmpeg
 pandas
 scikit-learn
 streamlit
-streamlit-google-auth
+streamlit-firebase-auth
 python-dotenv
