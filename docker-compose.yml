@@ -47,5 +47,33 @@ services:
     depends_on:
       - redis
 
-  # Additional Microservices will be added below as they are developed
-  # (api-gateway, search-service, recommendation-service, etc.)
+  # ---------------------------------------------
+  # Recommendation / Discovery Service
+  # ---------------------------------------------
+  recommendation:
+    build:
+      context: ./backend/recommendation_service
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - LASTFM_API_KEY=${LASTFM_API_KEY:-}
+    depends_on:
+      - redis
+
+  # ---------------------------------------------
+  # Chatbot DJ Service (Groq + LangChain)
+  # ---------------------------------------------
+  chatbot:
+    build:
+      context: ./backend/chatbot_service
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - RECOMMENDATION_API_URL=http://recommendation:8001
+      - YTCONVERTER_API_URL=http://ytconverter:8000
+    depends_on:
+      - redis
+      - recommendation
