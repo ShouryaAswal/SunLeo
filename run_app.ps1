@@ -4,18 +4,18 @@ Write-Host "=================================="
 Write-Host "       SunLeo App Launcher        "
 Write-Host "=================================="
 Write-Host ""
-Write-Host "1. Cleaning up old processes (Freeing ports 8000, 8001 & 8501)..."
+Write-Host "1. Cleaning up old processes (Freeing ports 8000, 8001, 8002 & 8501)..."
 
 # Function to safely kill processes on a specific port
 function Clear-Port($port) {
     $connections = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
     if ($connections) {
         # Select unique process IDs
-        $pids = $connections | Select-Object -ExpandProperty OwningProcess -Unique
-        foreach ($pid in $pids) {
-            Write-Host "   [!] Found process ($pid) using port $port. Terminating..."
-            taskkill /PID $pid /F /T 2>&1 | Out-Null
-            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+        $procIds = $connections | Select-Object -ExpandProperty OwningProcess -Unique
+        foreach ($procId in $procIds) {
+            Write-Host "   [!] Found process ($procId) using port $port. Terminating..."
+            taskkill /PID $procId /F /T 2>&1 | Out-Null
+            Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
         }
     } else {
         Write-Host "   [ok] Port $port is free."
@@ -24,6 +24,7 @@ function Clear-Port($port) {
 
 Clear-Port 8000
 Clear-Port 8001
+Clear-Port 8002
 Clear-Port 8501
 
 Write-Host "Waiting briefly for ports to be fully released..."
@@ -45,10 +46,14 @@ Write-Host "4. Starting Discovery/Recommendation Service (port 8001) in a new wi
 Start-Process powershell.exe -ArgumentList "-NoExit -Command `"cd '$baseDir'; & '.\\.venv\\Scripts\\Activate.ps1'; cd backend/recommendation_service; uvicorn app.main:app --port 8001`""
 Write-Host "   -> Discovery Service launched."
 
-# Wait for both backends to be ready before starting frontend
+Write-Host "5. Starting Chatbot Service (port 8002) in a new window..."
+Start-Process powershell.exe -ArgumentList "-NoExit -Command `"cd '$baseDir'; & '.\\.venv\\Scripts\\Activate.ps1'; cd backend/chatbot_service; uvicorn app.main:app --port 8002`""
+Write-Host "   -> Chatbot Service launched."
+
+# Wait for all backends to be ready before starting frontend
 Start-Sleep -Seconds 4
 
-Write-Host "5. Starting Frontend (Streamlit) on port 8501 in a new window..."
+Write-Host "6. Starting Frontend (Streamlit) on port 8501 in a new window..."
 Start-Process powershell.exe -ArgumentList "-NoExit -Command `"cd '$baseDir'; & '.\\.venv\\Scripts\\Activate.ps1'; cd frontend; streamlit run app/home.py --server.port 8501`""
 Write-Host "   -> Frontend launched."
 
@@ -59,6 +64,7 @@ Write-Host "=================================="
 Write-Host ""
 Write-Host "  Backend (YTConverter):  http://localhost:8000"
 Write-Host "  Backend (Discovery):    http://localhost:8001"
+Write-Host "  Backend (Chatbot):      http://localhost:8002"
 Write-Host "  Frontend (Streamlit):   http://localhost:8501"
 Write-Host ""
 Write-Host "You can close this window now. The apps are running in separate windows."
