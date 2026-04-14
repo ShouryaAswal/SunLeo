@@ -2,10 +2,10 @@ fastapi
 uvicorn
 yt-dlp
 pydantic
-python-multipart
-ffmpeg
-pandas
-scikit-learn
 streamlit
-streamlit-firebase-auth
 python-dotenv
+groq
+requests
+httpx
+google-cloud-firestore
+firebase-admin

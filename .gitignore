@@ -57,3 +57,5 @@ google_secret.json
 
 # Application specifics
 backend/ytconverter/downloads/
+
+backend/chatbot_service/sunleo-d0820-firebase-adminsdk-fbsvc-3f8a4da36d.json
