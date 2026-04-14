@@ -464,6 +464,157 @@ label, .stTextInput label, .stTextArea label, .stSelectbox label, .stSlider labe
     color: #f87171;
 }
 
+/* ─── Chat bubble styles (legacy custom divs) ─── */
+.chat-bubble-bot {
+    background: rgba(124, 58, 237, 0.08);
+    border: 1px solid rgba(124, 58, 237, 0.2);
+    border-left: 3px solid #7c3aed;
+    border-radius: 0 14px 14px 14px;
+    padding: 0.9rem 1.1rem;
+    margin: 0.4rem 2rem 0.4rem 0;
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    font-size: 0.93rem;
+    line-height: 1.6;
+    animation: fadeInUp 0.3s ease-out;
+}
+
+.chat-bubble-user {
+    background: linear-gradient(135deg, rgba(124,58,237,0.22), rgba(37,99,235,0.22));
+    border: 1px solid rgba(124, 58, 237, 0.3);
+    border-radius: 14px 0 14px 14px;
+    padding: 0.9rem 1.1rem;
+    margin: 0.4rem 0 0.4rem 2rem;
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    font-size: 0.93rem;
+    line-height: 1.6;
+    text-align: right;
+    animation: fadeInUp 0.3s ease-out;
+}
+
+.chat-sender-bot {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #a78bfa;
+    margin-bottom: 4px;
+    letter-spacing: 0.04em;
+}
+
+.chat-sender-user {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #60a5fa;
+    margin-bottom: 4px;
+    text-align: right;
+    letter-spacing: 0.04em;
+}
+
+/* ─── Native st.chat_message() overrides ─── */
+
+/* Reset the default white background on all chat messages */
+[data-testid="stChatMessage"] {
+    background: transparent !important;
+    border: none !important;
+    padding: 0.2rem 0 !important;
+    animation: fadeInUp 0.3s ease-out;
+}
+
+/* Shared content typography */
+[data-testid="stChatMessageContent"] {
+    font-family: 'Inter', sans-serif !important;
+    font-size: 0.93rem !important;
+    line-height: 1.6 !important;
+    color: var(--text) !important;
+    border-radius: 14px !important;
+    padding: 0.9rem 1.1rem !important;
+    background: transparent !important;
+}
+
+/* Bot / assistant bubble — purple accent */
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"])
+[data-testid="stChatMessageContent"] {
+    background: rgba(124, 58, 237, 0.08) !important;
+    border: 1px solid rgba(124, 58, 237, 0.2) !important;
+    border-left: 3px solid #7c3aed !important;
+    border-radius: 0 14px 14px 14px !important;
+    margin-right: 2rem;
+}
+
+/* User bubble — gradient */
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"])
+[data-testid="stChatMessageContent"] {
+    background: linear-gradient(135deg, rgba(124,58,237,0.22), rgba(37,99,235,0.22)) !important;
+    border: 1px solid rgba(124, 58, 237, 0.3) !important;
+    border-radius: 14px 0 14px 14px !important;
+    margin-left: 2rem;
+}
+
+/* Avatar icons — style to match theme */
+[data-testid="chatAvatarIcon-assistant"],
+[data-testid="chatAvatarIcon-user"] {
+    background: var(--gradient) !important;
+    border: 1px solid rgba(124, 58, 237, 0.4) !important;
+    border-radius: 50% !important;
+    font-size: 1rem !important;
+}
+
+.quick-action-btn {
+    display: inline-block;
+    padding: 6px 14px;
+    margin: 4px;
+    background: rgba(124, 58, 237, 0.1);
+    border: 1px solid rgba(124, 58, 237, 0.25);
+    border-radius: 20px;
+    color: #a78bfa;
+    font-size: 0.82rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.quick-action-btn:hover {
+    background: rgba(124, 58, 237, 0.2);
+    border-color: rgba(124, 58, 237, 0.5);
+    transform: translateY(-1px);
+}
+
+/* ─── Playlist management styles ─── */
+.playlist-panel {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    padding: 1.2rem 1.5rem;
+    margin-bottom: 1rem;
+    transition: all 0.3s ease;
+}
+
+.playlist-panel:hover {
+    border-color: rgba(124, 58, 237, 0.35);
+    box-shadow: 0 4px 20px rgba(124, 58, 237, 0.08);
+}
+
+.playlist-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-weight: 600;
+    font-size: 1rem;
+    color: var(--text);
+}
+
+.track-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    font-size: 0.88rem;
+    color: var(--text-muted);
+}
+
+.track-row:last-child { border-bottom: none; }
+
 /* ─── Responsive tweaks ─── */
 @media (max-width: 768px) {
     .hero-title { font-size: 2rem; }
