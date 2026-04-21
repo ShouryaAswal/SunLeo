@@ -43,23 +43,30 @@ To achieve 100% statement coverage, we need **at least 2 test cases**:
 **Goal:** Ensure every branch (True/False) of every decision point is taken at least once.
 
 ```python
-def get_status(job):
-    if job is None:           # Branch 1: True/False
-        return "not found"
-    if job.status == "done":  # Branch 2: True/False
-        return "completed"
-    return "in progress"
+def get_playlist(uid, playlist_id):
+    doc = _playlist_ref(uid, playlist_id).get()
+    if not doc.exists:          # Branch 1: True/False
+        return None
+    data = doc.to_dict()        # Branch 1 False path
+    data["id"] = doc.id
+    return data
 ```
 
-We need **3 test cases** for full branch coverage:
-- `job = None` → Branch 1 True
-- `job.status = "done"` → Branch 1 False, Branch 2 True
-- `job.status = "running"` → Branch 1 False, Branch 2 False
+We need **2 test cases** for full branch coverage:
+- `playlist_id` exists → Branch 1 False (returns data)
+- `playlist_id` doesn't exist → Branch 1 True (returns None)
 
 #### C) Path Coverage
 **Goal:** Test every possible execution path through the code. This is the most thorough but also most expensive technique.
 
 For a function with 3 independent `if` statements, there are **2³ = 8** possible paths.
+
+**SunLeo example — `extract_video_id()`** has 5 distinct paths:
+1. `youtu.be` short link → return path segment
+2. `/watch?v=` standard → return query param
+3. `/shorts/` → return path segment
+4. `/embed/` → return path segment
+5. Default → return `None`
 
 #### D) Condition Coverage
 **Goal:** Ensure each individual boolean sub-expression in a compound condition evaluates to both True and False.
@@ -72,7 +79,19 @@ This compound condition has 2 sub-expressions:
 - `scheme check`: must be True once and False once
 - `netloc check`: must be True once and False once
 
-### 2.3 Advantages of White Box Testing
+### 2.3 White Box Testing in the Context of Firebase/NoSQL
+
+When testing a Firebase-based DAL, white box testing focuses on:
+
+| Focus Area | What to Test |
+|------------|-------------|
+| **Firestore client initialization** | Singleton pattern — `get_db()` returns same client on multiple calls |
+| **Collection/document paths** | Correct paths: `users/{uid}/playlists/{id}` |
+| **CRUD branches** | `doc.exists` check branches (found vs not found) |
+| **Error handling** | `ValueError` raised for invalid playlist IDs, `IndexError` for bad track indices |
+| **Data transformation** | `doc.to_dict()` conversion, datetime serialization |
+
+### 2.4 Advantages of White Box Testing
 
 | Advantage | Explanation |
 |-----------|-------------|
@@ -81,7 +100,7 @@ This compound condition has 2 sub-expressions:
 | **Optimization** | Identifies performance bottlenecks in specific code paths |
 | **Early detection** | Can be performed during development (unit testing) |
 
-### 2.4 Disadvantages
+### 2.5 Disadvantages
 
 | Disadvantage | Explanation |
 |--------------|-------------|
@@ -121,21 +140,29 @@ Test at the **boundaries** of input ranges, where bugs most commonly occur. Test
 | Minimum | 0 URLs | ❌ Rejected (empty) |
 | Just above min | 1 URL | ✅ Accepted |
 
+**Example — Playlist track operations:**
+| Input | Value | Expected |
+|-------|-------|----------|
+| Remove track at index 0 | First track | ✅ Removed |
+| Remove track at last index | Last track | ✅ Removed |
+| Remove track at negative index | -1 | ❌ IndexError |
+| Remove track at out-of-range index | len(tracks) | ❌ IndexError |
+
 #### C) Decision Table Testing
 Create a table mapping all **combinations of conditions** to expected **actions/outcomes**.
 
-**Example — Feedback form submission:**
-| Name Valid | Email Valid | Message Valid | Outcome |
-|-----------|-------------|---------------|---------|
-| ✅ | ✅ | ✅ | Saved successfully |
-| ❌ | ✅ | ✅ | Error: Name required |
-| ✅ | ❌ | ✅ | Error: Valid email required |
-| ✅ | ✅ | ❌ | Error: Message required |
+**Example — Playlist creation:**
+| UID Valid | Name Valid | Tracks Valid | Outcome |
+|-----------|------------|-------------|---------|
+| ✅ | ✅ | ✅ | Playlist created |
+| ✅ | ✅ | ❌ (invalid format) | Error |
+| ✅ | ❌ (empty) | ✅ | Error |
+| ❌ (empty) | ✅ | ✅ | Error |
 
 #### D) State Transition Testing
 Test how the system transitions between different **states** based on inputs.
 
-**Example — Job Status Transitions:**
+**Example — Conversion Job Status Transitions:**
 ```mermaid
 stateDiagram-v2
     [*] --> queued: POST /convert
@@ -144,6 +171,15 @@ stateDiagram-v2
     running --> failed: Exception occurs
     completed --> [*]: File downloaded or cleaned up
     failed --> [*]: Error logged
+```
+
+**Example — User Authentication States:**
+```mermaid
+stateDiagram-v2
+    [*] --> logged_out: App loads
+    logged_out --> logged_in: Firebase Auth success
+    logged_in --> logged_out: User clicks Logout
+    logged_in --> logged_in: Session refresh
 ```
 
 ### 3.3 Advantages of Black Box Testing
@@ -165,21 +201,55 @@ stateDiagram-v2
 
 ---
 
-## 4. When to Use Which?
+## 4. Testing Strategy for Firebase-Based Applications
+
+When testing a Firebase-backed app like SunLeo, there are unique considerations:
+
+### 4.1 The Mocking Strategy
+Since Firestore is a **cloud service**, tests should **not** hit the live database. Instead, we use **mocking** to simulate Firestore interactions:
+
+```python
+# Mock the Firestore client so tests run without network access
+@pytest.fixture
+def mock_firestore(monkeypatch):
+    mock_db = MagicMock()
+    monkeypatch.setattr("app.firestore_client._db", mock_db)
+    return mock_db
+```
+
+| Test Type | Approach |
+|-----------|----------|
+| **Unit tests (white box)** | Mock Firestore, test function logic in isolation |
+| **Integration tests** | Use Firebase Emulator or test project |
+| **API tests (black box)** | Mock the service layer, test HTTP endpoints |
+
+### 4.2 What We Test Without Firebase
+
+Many SunLeo components are **pure functions** with no database dependency:
+- `extract_video_id()` — URL parsing (pure logic)
+- `validate_youtube_url()` — URL validation (pure logic)
+- `InMemoryJobQueue` — async queue (in-memory only)
+- API endpoint routing and response codes
+
+These tests run **fast** and require **no mocking**.
+
+---
+
+## 5. When to Use Which?
 
 | Scenario | Recommended | Reason |
 |----------|-------------|--------|
 | Unit testing utility functions | White Box | Need to cover all branches/paths |
 | API endpoint testing | Black Box | Focus on correct HTTP responses |
-| Database operations | White Box | Verify SQL executes correctly |
-| User form validation | Black Box | Test from user's perspective |
-| Security testing | White Box | Need to trace data flow for injection vulnerabilities |
+| Firestore CRUD operations | White Box | Verify document paths and field mappings |
+| Playlist user experience | Black Box | Test from user's perspective |
+| Security testing | White Box | Need to verify UID scoping and auth checks |
 | Acceptance testing | Black Box | Validate against user requirements |
-| Integration testing | Both | White box for data flow, black box for behavior |
+| Firebase integration | Both | White box for data flow, black box for behavior |
 
 ---
 
-## 5. Summary
+## 6. Summary
 
 ```mermaid
 graph LR
@@ -201,4 +271,7 @@ graph LR
     BB["Knows Only Specification"] --> BlackBox
 ```
 
-Both techniques are **complementary**, not competing. A thorough testing strategy uses White Box testing to verify internal correctness and Black Box testing to validate external behavior. Together, they provide **comprehensive quality assurance**.
+Both techniques are **complementary**, not competing. A thorough testing strategy uses White Box testing to verify internal correctness and Black Box testing to validate external behavior. For a Firebase-based application like SunLeo, this means:
+
+- **White Box:** Test URL parsing paths, Firestore document operations (mocked), singleton initialization, error handling branches
+- **Black Box:** Test API endpoints (HTTP status codes, response schemas), user authentication flows, playlist CRUD behavior, boundary conditions

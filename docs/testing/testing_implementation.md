@@ -4,6 +4,8 @@
 
 This document details every test case implemented for the SunLeo application, organized by testing type. Each test includes its ID, the technique used, the target function/endpoint, and the expected outcome.
 
+**Testing Strategy:** Since SunLeo uses **Firebase Firestore** (a cloud NoSQL database), tests use a **mocked Firestore client** that simulates collections, documents, and queries entirely in-memory. This allows tests to run **fast, offline, and without any Firebase credentials**. URL utility and job queue tests remain pure (no mocking needed).
+
 ---
 
 ## 1. White Box Test Cases
@@ -25,22 +27,23 @@ White Box tests are in [`test_whitebox.py`](file:///c:/Users/shour/Desktop/SunLe
 | WB-03b | `validate_youtube_url` | Condition Coverage | Invalid scheme (ftp://) | Returns `False` |
 | WB-03c | `validate_youtube_url` | Condition Coverage | Invalid host (notyoutube.com) | Returns `False` |
 | WB-03d | `validate_youtube_url` | Condition Coverage | No extractable video ID | Returns `False` |
-| WB-04a | `JobDAL.create_job` | Statement Coverage | Insert job, verify returned row | `JobRow` with status='queued' |
-| WB-04b | `JobDAL.create_job` | Statement Coverage | Insert job, verify DB persistence | Row exists in DB after insert |
-| WB-05a | `JobDAL.update_job_status` | Statement Coverage | Update status + started_at only | Other fields remain `None` |
-| WB-05b | `JobDAL.update_job_status` | Statement Coverage | Update all fields at once | All fields reflect new values |
-| WB-06a | `JobDAL.get_job` | Branch Coverage | Query existing job | Returns `JobRow` |
-| WB-06b | `JobDAL.get_job` | Branch Coverage | Query non-existent job | Returns `None` |
-| WB-07a | `JobDAL.delete_old_jobs` | Path Coverage | Delete old finished jobs | Returns count ≥ 1, job gone |
-| WB-07b | `JobDAL.delete_old_jobs` | Path Coverage | Keep recent finished jobs | Returns 0, job still exists |
-| WB-08a | `FeedbackDAL.save_feedback` | Statement Coverage | Save feedback → positive ID | Returns `int > 0` |
-| WB-08b | `FeedbackDAL.save_feedback` | Statement Coverage | Save + retrieve matches | Data integrity confirmed |
-| WB-09a | `FeedbackDAL.get_feedback_by_category` | Branch Coverage | Matching category | Non-empty list |
-| WB-09b | `FeedbackDAL.get_feedback_by_category` | Branch Coverage | Non-matching category | Empty list |
+| WB-04a | `create_playlist` | Statement Coverage | Create playlist, verify returned dict | Dict with `id`, `name`, `track_count` |
+| WB-04b | `create_playlist` | Statement Coverage | Create playlist, verify Firestore persistence | Playlist retrievable via `get_playlist()` |
+| WB-05a | `get_playlist` | Branch Coverage | Query existing playlist | Returns playlist dict |
+| WB-05b | `get_playlist` | Branch Coverage | Query non-existent playlist | Returns `None` |
+| WB-06a | `add_tracks` | Statement Coverage | Append tracks to existing playlist | `track_count` increases, tracks list grows |
+| WB-06b | `add_tracks` | Statement Coverage | Add tracks to non-existent playlist | Raises `ValueError` |
+| WB-07a | `remove_track` | Path Coverage | Remove track at valid index | Track removed, count decremented |
+| WB-07b | `remove_track` | Path Coverage | Remove from non-existent playlist | Raises `ValueError` |
+| WB-07c | `remove_track` | Path Coverage | Remove at out-of-range index | Raises `IndexError` |
+| WB-08a | `delete_playlist` | Branch Coverage | Delete existing playlist | Returns `True`, playlist gone |
+| WB-08b | `delete_playlist` | Branch Coverage | Delete non-existent playlist | Returns `False` |
+| WB-09a | `get_playlists` | Statement Coverage | List all user playlists | Returns list with `id` fields |
+| WB-09b | `get_playlists` | Statement Coverage | List playlists for user with none | Returns empty list |
 | WB-10a | `InMemoryJobQueue` | Statement Coverage | Enqueue → worker fires | Processed IDs list contains job |
 | WB-10b | `InMemoryJobQueue` | Statement Coverage | 3 concurrent workers | All 3 jobs processed |
 
-### Code Path Mapping
+### Code Path Mapping — URL Utilities
 
 ```mermaid
 graph TD
@@ -59,11 +62,33 @@ graph TD
     C3 -->|found| RT["return True"]
 ```
 
+### Code Path Mapping — Firestore Playlist Operations
+
+```mermaid
+graph TD
+    GP["get_playlist(uid, pid)"] --> D1{"doc.exists?"}
+    D1 -->|No| RN["return None"]
+    D1 -->|Yes| TD["doc.to_dict()"]
+    TD --> RI["return data with id"]
+    
+    RT["remove_track(uid, pid, idx)"] --> D2{"playlist found?"}
+    D2 -->|No| VE["raise ValueError"]
+    D2 -->|Yes| D3{"index in range?"}
+    D3 -->|No| IE["raise IndexError"]
+    D3 -->|Yes| POP["tracks.pop(idx)"]
+    POP --> UPD["Firestore .update()"]
+
+    DP["delete_playlist(uid, pid)"] --> D4{"doc.exists?"}
+    D4 -->|No| RF2["return False"]
+    D4 -->|Yes| DEL["ref.delete()"]
+    DEL --> RT2["return True"]
+```
+
 ---
 
 ## 2. Black Box Test Cases
 
-Black Box tests are in [`test_blackbox.py`](file:///c:/Users/shour/Desktop/SunLeo/tests/test_blackbox.py). These tests are designed **without looking at the source code**, based purely on the API specification.
+Black Box tests are in [`test_blackbox.py`](file:///c:/Users/shour/Desktop/SunLeo/tests/test_blackbox.py). These tests are designed **without looking at the source code**, based purely on the API specification and feature requirements.
 
 ### Test Case Summary
 
@@ -78,11 +103,15 @@ Black Box tests are in [`test_blackbox.py`](file:///c:/Users/shour/Desktop/SunLe
 | BB-06 | `GET /status/{job_id}` | Equivalence Partition | Existing job_id | 200 + status info |
 | BB-07 | `GET /status/{job_id}` | Equivalence Partition | Non-existent job_id | 404 error |
 | BB-08 | `GET /download/{job_id}` | Equivalence Partition | Queued (incomplete) job | 409 Conflict |
-| BB-09a | `FeedbackDAL` | Decision Table | All valid fields | Saved + retrievable |
-| BB-09b | `FeedbackDAL` | Decision Table | Multiple categories | Filtered correctly |
-| BB-10a | `FeedbackDAL` | Boundary Value | 1-char message | Saved correctly |
-| BB-10b | `FeedbackDAL` | Boundary Value | 5000-char message | Full message stored |
-| BB-10c | `FeedbackDAL` | Boundary Value | Special chars (', ", <, &, 🎵) | No SQL injection, data intact |
+| BB-09a | Playlist Service | Decision Table | Create + retrieve valid playlist | Saved + retrievable by name |
+| BB-09b | Playlist Service | Decision Table | Delete playlist | Removed from user's list |
+| BB-09c | Playlist Service | Decision Table | Add tracks to playlist | Track count grows |
+| BB-10a | Playlist Service | Boundary Value | Empty playlist (0 tracks) | Created with `track_count: 0` |
+| BB-10b | Playlist Service | Boundary Value | 50 tracks | All 50 stored correctly |
+| BB-10c | Playlist Service | Boundary Value | Special chars (', ", <, &, 🎵) | Data intact, no injection |
+| BB-10d | Playlist Service | Boundary Value | Remove first track (index 0) | First track removed |
+| BB-10e | Playlist Service | Boundary Value | Remove last track | Last track removed |
+| BB-10f | Playlist Service | Boundary Value | Remove at out-of-range index | Raises IndexError |
 
 ### Equivalence Classes Used
 
@@ -101,11 +130,57 @@ Black Box tests are in [`test_blackbox.py`](file:///c:/Users/shour/Desktop/SunLe
 │ Malformed string    │ "not-a-url", "", "12345"       │
 │ (not a URL)         │                                │
 └─────────────────────┴────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────┐
+│ Input: Playlist Track Index                          │
+├─────────────────────┬────────────────────────────────┤
+│ Class               │ Examples                       │
+├─────────────────────┼────────────────────────────────┤
+│ Valid index          │ 0, len(tracks)-1               │
+├─────────────────────┼────────────────────────────────┤
+│ Out of range         │ len(tracks), -1, 999           │
+├─────────────────────┼────────────────────────────────┤
+│ Non-existent playlist│ "fake-id"                     │
+└─────────────────────┴────────────────────────────────┘
 ```
 
 ---
 
-## 3. Test Results
+## 3. Mocking Strategy
+
+### Why Mock Firestore?
+
+Firestore is a **cloud-hosted database** — running tests against it would:
+- Require network access and valid credentials
+- Cost money (Firestore charges per read/write)
+- Be slow (network round-trips)
+- Risk polluting production data
+
+### How We Mock
+
+The [`conftest.py`](file:///c:/Users/shour/Desktop/SunLeo/tests/conftest.py) file implements a complete in-memory Firestore simulator:
+
+| Mock Class | Simulates | Key Methods |
+|------------|-----------|-------------|
+| `MockFirestoreDB` | `firestore.Client` | `.collection(name)` |
+| `MockFirestoreCollection` | Firestore Collection | `.document(id)`, `.order_by().stream()` |
+| `MockDocumentRef` | Firestore DocumentReference | `.get()`, `.set()`, `.update()`, `.delete()` |
+| `MockFirestoreDoc` | Firestore DocumentSnapshot | `.exists`, `.to_dict()`, `.id` |
+| `MockQuery` | Firestore Query | `.stream()` (with sorting) |
+
+The mock is injected using `unittest.mock.patch` so that `playlist_service.get_db()` returns the mock instead of connecting to the real Firebase:
+
+```python
+@pytest.fixture
+def mock_firestore_db():
+    mock_db = MockFirestoreDB()
+    with patch("backend.chatbot_service.app.playlist_service.get_db", return_value=mock_db):
+        yield mock_db
+```
+
+---
+
+## 4. Test Results
 
 > **Note:** Results are populated after running `pytest tests/ -v`
 
@@ -119,8 +194,8 @@ python -m pytest tests/ -v --tb=short
 
 | Suite | Total Tests | Passed | Failed | Status |
 |-------|-----------|--------|--------|--------|
-| White Box (`test_whitebox.py`) | 10+ | — | — | 🔄 Pending |
-| Black Box (`test_blackbox.py`) | 10+ | — | — | 🔄 Pending |
-| **Total** | **20+** | — | — | 🔄 Pending |
+| White Box (`test_whitebox.py`) | 24 | — | — | 🔄 Pending |
+| Black Box (`test_blackbox.py`) | 17 | — | — | 🔄 Pending |
+| **Total** | **41** | — | — | 🔄 Pending |
 
 *(This table will be updated with actual results after test execution)*

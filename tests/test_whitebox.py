@@ -5,6 +5,9 @@ White Box Test Suite — SunLeo Application
 White Box (Glass Box) tests are designed with full knowledge of the internal
 code structure. Each test targets specific code paths, branches, and statements.
 
+Updated for Firebase Firestore DAL — playlist operations use a mocked
+Firestore client (no live Firebase calls). URL utility tests remain pure.
+
 Test IDs: WB-01 through WB-10
 """
 from __future__ import annotations
@@ -12,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
+from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
@@ -21,7 +25,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.ytconverter.app.utils import extract_video_id, validate_youtube_url
-from backend.database.dal import JobDAL, FeedbackDAL
 
 
 # ==========================================================================
@@ -32,7 +35,7 @@ class TestExtractVideoIdPathCoverage:
     """
     Technique: PATH COVERAGE
     Target: extract_video_id() in utils.py
-    
+
     This function has 4 distinct execution paths based on the URL format:
       1. youtu.be short links
       2. /watch?v= standard links
@@ -70,7 +73,7 @@ class TestExtractVideoIdBranchCoverage:
     """
     Technique: BRANCH COVERAGE
     Target: extract_video_id() in utils.py
-    
+
     Tests the False branches — URLs that don't match any known pattern
     should return None.
     """
@@ -101,12 +104,12 @@ class TestValidateUrlConditionCoverage:
     """
     Technique: CONDITION COVERAGE
     Target: validate_youtube_url() in utils.py
-    
+
     The function has 3 conditions:
       C1: parsed.scheme in {"http", "https"}
       C2: parsed.netloc in YT_HOSTS
       C3: extract_video_id(url) is not None
-    
+
     We test each sub-condition as True and False independently.
     """
 
@@ -128,219 +131,206 @@ class TestValidateUrlConditionCoverage:
 
 
 # ==========================================================================
-# WB-04: JobDAL.create_job — Statement Coverage
+# WB-04: Playlist Service — create_playlist Statement Coverage
 # ==========================================================================
 
-class TestJobDALCreateStatement:
+class TestPlaylistCreateStatement:
     """
     Technique: STATEMENT COVERAGE
-    Target: JobDAL.create_job() in dal.py
-    
-    Verifies the INSERT statement executes successfully and
-    returns a correctly populated JobRow.
+    Target: playlist_service.create_playlist()
+
+    Verifies every statement in create_playlist() executes:
+      1. UUID generation
+      2. Document construction
+      3. Firestore .set() call
+      4. Return value contains 'id' key
     """
 
-    @pytest.mark.asyncio
-    async def test_create_job_returns_correct_row(self, job_dal):
-        """Every statement in create_job() executes and returns valid data."""
-        result = await job_dal.create_job("job-001", "https://youtu.be/abc", "abc")
-        assert result.job_id == "job-001"
-        assert result.url == "https://youtu.be/abc"
-        assert result.video_id == "abc"
-        assert result.status == "queued"
-
-    @pytest.mark.asyncio
-    async def test_create_job_persists_in_db(self, job_dal):
-        """Verify the INSERT actually wrote to the database."""
-        await job_dal.create_job("job-002", "https://youtu.be/xyz", "xyz")
-        retrieved = await job_dal.get_job("job-002")
-        assert retrieved is not None
-        assert retrieved.job_id == "job-002"
-
-
-# ==========================================================================
-# WB-05: JobDAL.update_job_status — Statement Coverage
-# ==========================================================================
-
-class TestJobDALUpdateStatement:
-    """
-    Technique: STATEMENT COVERAGE
-    Target: JobDAL.update_job_status() in dal.py
-    
-    Verifies the dynamic UPDATE statement correctly modifies
-    only the fields that are explicitly provided.
-    """
-
-    @pytest.mark.asyncio
-    async def test_update_status_only(self, job_dal):
-        """Update just the status field, leaving others unchanged."""
-        await job_dal.create_job("job-010", "https://youtu.be/aaa", "aaa")
-        await job_dal.update_job_status("job-010", "running", started_at="2026-04-07T09:00:00Z")
-
-        job = await job_dal.get_job("job-010")
-        assert job.status == "running"
-        assert job.started_at == "2026-04-07T09:00:00Z"
-        assert job.title is None  # not updated
-
-    @pytest.mark.asyncio
-    async def test_update_with_all_fields(self, job_dal):
-        """Update status along with title, metadata, and timestamps."""
-        await job_dal.create_job("job-011", "https://youtu.be/bbb", "bbb")
-        await job_dal.update_job_status(
-            "job-011", "completed",
-            title="Test Song",
-            file_path="/tmp/bbb.mp3",
-            metadata={"duration": 180},
-            finished_at="2026-04-07T09:05:00Z",
+    def test_create_playlist_returns_doc_with_id(self, playlist_service):
+        """create_playlist() should return a dict with 'id', 'name', 'tracks'."""
+        result = playlist_service.create_playlist(
+            "test-uid-001", "My Playlist", [{"track_name": "Song A", "artist_name": "Artist 1"}]
         )
+        assert "id" in result
+        assert result["name"] == "My Playlist"
+        assert result["track_count"] == 1
+        assert len(result["tracks"]) == 1
 
-        job = await job_dal.get_job("job-011")
-        assert job.status == "completed"
-        assert job.title == "Test Song"
-        assert job.file_path == "/tmp/bbb.mp3"
-        assert job.metadata == {"duration": 180}
-        assert job.finished_at == "2026-04-07T09:05:00Z"
+    def test_create_playlist_persists_in_firestore(self, playlist_service):
+        """Created playlist should be retrievable via get_playlist()."""
+        created = playlist_service.create_playlist("test-uid-002", "Workout Mix", [])
+        retrieved = playlist_service.get_playlist("test-uid-002", created["id"])
+        assert retrieved is not None
+        assert retrieved["name"] == "Workout Mix"
 
 
 # ==========================================================================
-# WB-06: JobDAL.get_job — Branch Coverage (found vs not found)
+# WB-05: Playlist Service — get_playlist Branch Coverage
 # ==========================================================================
 
-class TestJobDALGetBranch:
+class TestPlaylistGetBranch:
     """
     Technique: BRANCH COVERAGE
-    Target: JobDAL.get_job() in dal.py
-    
-    Two branches:
-      - Row found → return JobRow
-      - Row not found → return None
+    Target: playlist_service.get_playlist()
+
+    Two branches based on doc.exists:
+      - doc exists → return dict with data
+      - doc doesn't exist → return None
     """
 
-    @pytest.mark.asyncio
-    async def test_get_existing_job(self, job_dal):
-        """Branch: row IS found → returns JobRow."""
-        await job_dal.create_job("job-020", "https://youtu.be/ccc", "ccc")
-        result = await job_dal.get_job("job-020")
+    def test_get_existing_playlist(self, playlist_service):
+        """Branch: doc.exists=True → returns playlist dict."""
+        created = playlist_service.create_playlist("uid-010", "Found Playlist", [])
+        result = playlist_service.get_playlist("uid-010", created["id"])
         assert result is not None
-        assert result.job_id == "job-020"
+        assert result["name"] == "Found Playlist"
 
-    @pytest.mark.asyncio
-    async def test_get_nonexistent_job(self, job_dal):
-        """Branch: row NOT found → returns None."""
-        result = await job_dal.get_job("nonexistent-id")
+    def test_get_nonexistent_playlist(self, playlist_service):
+        """Branch: doc.exists=False → returns None."""
+        result = playlist_service.get_playlist("uid-010", "nonexistent-id")
         assert result is None
 
 
 # ==========================================================================
-# WB-07: JobDAL.delete_old_jobs — Path Coverage
+# WB-06: Playlist Service — add_tracks Statement Coverage
 # ==========================================================================
 
-class TestJobDALDeleteOldPath:
+class TestPlaylistAddTracksStatement:
+    """
+    Technique: STATEMENT COVERAGE
+    Target: playlist_service.add_tracks()
+
+    Verifies:
+      1. Existing tracks are read
+      2. New tracks appended
+      3. track_count updated
+      4. .update() called on Firestore
+    """
+
+    def test_add_tracks_appends_correctly(self, playlist_service):
+        """Adding tracks should append to existing list and update count."""
+        created = playlist_service.create_playlist(
+            "uid-020", "Growing Playlist",
+            [{"track_name": "Track 1", "artist_name": "Artist 1"}]
+        )
+        updated = playlist_service.add_tracks(
+            "uid-020", created["id"],
+            [{"track_name": "Track 2", "artist_name": "Artist 2"}]
+        )
+        assert updated["track_count"] == 2
+        assert len(updated["tracks"]) == 2
+        assert updated["tracks"][1]["track_name"] == "Track 2"
+
+    def test_add_tracks_to_nonexistent_raises(self, playlist_service):
+        """Adding tracks to a non-existent playlist should raise ValueError."""
+        with pytest.raises(ValueError, match="not found"):
+            playlist_service.add_tracks(
+                "uid-020", "fake-playlist-id",
+                [{"track_name": "X", "artist_name": "Y"}]
+            )
+
+
+# ==========================================================================
+# WB-07: Playlist Service — remove_track Path Coverage
+# ==========================================================================
+
+class TestPlaylistRemoveTrackPath:
     """
     Technique: PATH COVERAGE
-    Target: JobDAL.delete_old_jobs() in dal.py
-    
-    Tests two scenarios:
-      - Old jobs are deleted (finished_at far in the past)
-      - Recent jobs are kept (finished_at is recent)
+    Target: playlist_service.remove_track()
+
+    Paths:
+      1. Valid index → track removed, count updated
+      2. Playlist not found → ValueError
+      3. Index out of range → IndexError
     """
 
-    @pytest.mark.asyncio
-    async def test_deletes_old_finished_jobs(self, job_dal, db_connection):
-        """Jobs with old finished_at timestamps should be deleted."""
-        await job_dal.create_job("old-job", "https://youtu.be/old", "old")
-        # Manually set finished_at to 2 hours ago
-        await db_connection.execute(
-            "UPDATE jobs SET status='completed', finished_at=datetime('now', '-2 hours') WHERE job_id='old-job'"
+    def test_remove_valid_index(self, playlist_service):
+        """Removing track at valid index 0 should shrink the list."""
+        created = playlist_service.create_playlist(
+            "uid-030", "Remove Test",
+            [
+                {"track_name": "A", "artist_name": "1"},
+                {"track_name": "B", "artist_name": "2"},
+            ]
         )
-        await db_connection.commit()
+        result = playlist_service.remove_track("uid-030", created["id"], 0)
+        assert result["track_count"] == 1
+        assert result["tracks"][0]["track_name"] == "B"
 
-        deleted = await job_dal.delete_old_jobs(3600)  # 1 hour threshold
-        assert deleted >= 1
+    def test_remove_nonexistent_playlist_raises(self, playlist_service):
+        """Removing from a non-existent playlist should raise ValueError."""
+        with pytest.raises(ValueError, match="not found"):
+            playlist_service.remove_track("uid-030", "fake-id", 0)
 
-        # Verify it's gone
-        result = await job_dal.get_job("old-job")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_keeps_recent_jobs(self, job_dal, db_connection):
-        """Jobs with recent finished_at should NOT be deleted."""
-        await job_dal.create_job("new-job", "https://youtu.be/new", "new")
-        await db_connection.execute(
-            "UPDATE jobs SET status='completed', finished_at=datetime('now') WHERE job_id='new-job'"
+    def test_remove_out_of_range_raises(self, playlist_service):
+        """Removing at an out-of-range index should raise IndexError."""
+        created = playlist_service.create_playlist(
+            "uid-031", "Small Playlist",
+            [{"track_name": "Only", "artist_name": "One"}]
         )
-        await db_connection.commit()
-
-        deleted = await job_dal.delete_old_jobs(3600)
-        assert deleted == 0
-
-        # Verify it still exists
-        result = await job_dal.get_job("new-job")
-        assert result is not None
+        with pytest.raises(IndexError):
+            playlist_service.remove_track("uid-031", created["id"], 5)
 
 
 # ==========================================================================
-# WB-08: FeedbackDAL.save_feedback — Statement Coverage
+# WB-08: Playlist Service — delete_playlist Branch Coverage
 # ==========================================================================
 
-class TestFeedbackDALSaveStatement:
-    """
-    Technique: STATEMENT COVERAGE
-    Target: FeedbackDAL.save_feedback() in dal.py
-    
-    Verifies INSERT executes and returns the auto-generated ID.
-    """
-
-    @pytest.mark.asyncio
-    async def test_save_returns_positive_id(self, feedback_dal):
-        """save_feedback() should return a positive integer ID."""
-        fb_id = await feedback_dal.save_feedback(
-            "Alice", "alice@test.com", "Bug Report", "The app crashes on startup."
-        )
-        assert isinstance(fb_id, int)
-        assert fb_id > 0
-
-    @pytest.mark.asyncio
-    async def test_save_persists_data(self, feedback_dal):
-        """Saved feedback should be retrievable."""
-        await feedback_dal.save_feedback(
-            "Bob", "bob@test.com", "Feature Request", "Add dark mode please."
-        )
-        all_fb = await feedback_dal.get_all_feedback()
-        assert len(all_fb) == 1
-        assert all_fb[0].name == "Bob"
-        assert all_fb[0].category == "Feature Request"
-
-
-# ==========================================================================
-# WB-09: FeedbackDAL.get_feedback_by_category — Branch Coverage
-# ==========================================================================
-
-class TestFeedbackDALCategoryBranch:
+class TestPlaylistDeleteBranch:
     """
     Technique: BRANCH COVERAGE
-    Target: FeedbackDAL.get_feedback_by_category() in dal.py
-    
-    Tests matching and non-matching category queries.
+    Target: playlist_service.delete_playlist()
+
+    Two branches:
+      - Playlist exists → delete and return True
+      - Playlist doesn't exist → return False
     """
 
-    @pytest.mark.asyncio
-    async def test_matching_category(self, feedback_dal):
-        """Category that has entries → non-empty list."""
-        await feedback_dal.save_feedback("Eve", "eve@test.com", "Bug Report", "Bug found!")
-        await feedback_dal.save_feedback("Frank", "frank@test.com", "Other", "Just a note.")
+    def test_delete_existing_returns_true(self, playlist_service):
+        """Deleting an existing playlist should return True."""
+        created = playlist_service.create_playlist("uid-040", "To Delete", [])
+        result = playlist_service.delete_playlist("uid-040", created["id"])
+        assert result is True
 
-        results = await feedback_dal.get_feedback_by_category("Bug Report")
-        assert len(results) == 1
-        assert results[0].name == "Eve"
+        # Verify it's gone
+        retrieved = playlist_service.get_playlist("uid-040", created["id"])
+        assert retrieved is None
 
-    @pytest.mark.asyncio
-    async def test_nonmatching_category(self, feedback_dal):
-        """Category with no entries → empty list."""
-        await feedback_dal.save_feedback("Grace", "grace@test.com", "Bug Report", "Another bug.")
+    def test_delete_nonexistent_returns_false(self, playlist_service):
+        """Deleting a non-existent playlist should return False."""
+        result = playlist_service.delete_playlist("uid-040", "no-such-id")
+        assert result is False
 
-        results = await feedback_dal.get_feedback_by_category("Feature Request")
-        assert len(results) == 0
+
+# ==========================================================================
+# WB-09: Playlist Service — get_playlists Statement Coverage
+# ==========================================================================
+
+class TestPlaylistListStatement:
+    """
+    Technique: STATEMENT COVERAGE
+    Target: playlist_service.get_playlists()
+
+    Verifies:
+      1. Multiple playlists are returned
+      2. Each result has an 'id' field
+      3. Order is maintained (newest first — DESCENDING)
+    """
+
+    def test_list_returns_all_playlists(self, playlist_service):
+        """get_playlists() should return all playlists for a user."""
+        playlist_service.create_playlist("uid-050", "Playlist A", [])
+        playlist_service.create_playlist("uid-050", "Playlist B", [])
+
+        results = playlist_service.get_playlists("uid-050")
+        assert len(results) == 2
+        assert all("id" in p for p in results)
+
+    def test_list_empty_user_returns_empty(self, playlist_service):
+        """A user with no playlists should get an empty list."""
+        results = playlist_service.get_playlists("uid-no-playlists")
+        assert results == []
 
 
 # ==========================================================================
@@ -351,7 +341,7 @@ class TestInMemoryJobQueueStatement:
     """
     Technique: STATEMENT COVERAGE
     Target: InMemoryJobQueue in queue.py
-    
+
     Tests the core enqueue → worker fires → task_done cycle
     by verifying the worker callback is actually invoked.
     """

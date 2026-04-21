@@ -5,6 +5,10 @@ Black Box Test Suite — SunLeo Application
 Black Box (Functional) tests are designed WITHOUT knowledge of internal code.
 Tests are based purely on specifications, requirements, and expected I/O behavior.
 
+Updated for Firebase Firestore DAL — playlist tests treat the service as a
+black box, validating behavior against specifications without examining
+internal Firestore calls.
+
 Test IDs: BB-01 through BB-10
 """
 from __future__ import annotations
@@ -28,7 +32,7 @@ class TestConvertValidURL:
     """
     Technique: EQUIVALENCE PARTITIONING
     Partition: Valid YouTube URLs → should return 200 + job_id
-    
+
     The tester does not know how URL validation works internally;
     they only know that valid YouTube URLs should be accepted.
     """
@@ -110,7 +114,7 @@ class TestBatchBoundaryAbove10:
     @pytest.mark.asyncio
     async def test_11_urls_rejected(self, async_client):
         """Submitting 11 URLs (one above max) should be rejected.
-        
+
         Note: FastAPI/Pydantic's model-level max_length=10 validation
         fires before the endpoint handler, returning 422 instead of 400.
         Both are client-error codes indicating the request was rejected.
@@ -213,102 +217,139 @@ class TestDownloadIncompleteJob:
 
 
 # ==========================================================================
-# BB-09: FeedbackDAL — Valid Feedback (Decision Table)
+# BB-09: Playlist Service — CRUD Behavior (Decision Table)
 # ==========================================================================
 
-class TestFeedbackDecisionTable:
+class TestPlaylistDecisionTable:
     """
     Technique: DECISION TABLE
-    
-    Decision table for feedback submission:
-    | Name | Email | Category | Message | Expected |
-    |------|-------|----------|---------|----------|
-    | ✓    | ✓     | ✓        | ✓       | Saved    |
-    
-    We test the all-valid case through the DAL interface,
-    treating it as a black box (we don't look at how SQL works).
+
+    Tests playlist operations as a black box — we only know the specification:
+    - create_playlist(uid, name, tracks) → returns playlist dict
+    - get_playlists(uid) → returns list of playlists
+    - delete_playlist(uid, pid) → returns True/False
+    - add_tracks(uid, pid, tracks) → returns updated playlist
+
+    We don't look at how Firestore documents are structured internally.
     """
 
-    @pytest.mark.asyncio
-    async def test_valid_feedback_saved_and_retrievable(self, feedback_dal):
-        """Submitting valid feedback should save it and make it retrievable."""
-        fb_id = await feedback_dal.save_feedback(
-            name="John Doe",
-            email="john@example.com",
-            category="General Feedback",
-            message="Great app! Love the dark mode."
+    def test_create_and_retrieve_playlist(self, playlist_service):
+        """Creating a playlist should make it retrievable."""
+        result = playlist_service.create_playlist(
+            uid="bb-user-001",
+            name="My Favorites",
+            tracks=[
+                {"track_name": "Song A", "artist_name": "Artist 1"},
+                {"track_name": "Song B", "artist_name": "Artist 2"},
+            ]
         )
-        assert fb_id > 0
+        assert result["name"] == "My Favorites"
+        assert result["track_count"] == 2
 
-        # Retrieve and verify (black box: we just check it comes back correctly)
-        all_feedback = await feedback_dal.get_all_feedback()
-        assert len(all_feedback) == 1
-        assert all_feedback[0].name == "John Doe"
-        assert all_feedback[0].email == "john@example.com"
-        assert all_feedback[0].category == "General Feedback"
-        assert all_feedback[0].message == "Great app! Love the dark mode."
+        # Retrieve and verify
+        all_playlists = playlist_service.get_playlists("bb-user-001")
+        assert len(all_playlists) == 1
+        assert all_playlists[0]["name"] == "My Favorites"
 
-    @pytest.mark.asyncio
-    async def test_multiple_categories_filtered_correctly(self, feedback_dal):
-        """Filtering by category should return only matching feedback."""
-        await feedback_dal.save_feedback("A", "a@t.com", "Bug Report", "Bug found")
-        await feedback_dal.save_feedback("B", "b@t.com", "Feature Request", "Add X")
-        await feedback_dal.save_feedback("C", "c@t.com", "Bug Report", "Another bug")
+    def test_delete_removes_playlist(self, playlist_service):
+        """Deleting a playlist should remove it from the user's list."""
+        created = playlist_service.create_playlist("bb-user-002", "Temp Playlist", [])
+        pid = created["id"]
 
-        bugs = await feedback_dal.get_feedback_by_category("Bug Report")
-        features = await feedback_dal.get_feedback_by_category("Feature Request")
+        # Delete
+        deleted = playlist_service.delete_playlist("bb-user-002", pid)
+        assert deleted is True
 
-        assert len(bugs) == 2
-        assert len(features) == 1
-        assert features[0].name == "B"
+        # Verify it's gone
+        found = playlist_service.get_playlist("bb-user-002", pid)
+        assert found is None
+
+    def test_add_tracks_grows_playlist(self, playlist_service):
+        """Adding tracks should increase the playlist's track list."""
+        created = playlist_service.create_playlist("bb-user-003", "Growing", [])
+        pid = created["id"]
+
+        updated = playlist_service.add_tracks(
+            "bb-user-003", pid,
+            [{"track_name": "New Song", "artist_name": "New Artist"}]
+        )
+        assert updated["track_count"] == 1
+        assert updated["tracks"][0]["track_name"] == "New Song"
 
 
 # ==========================================================================
-# BB-10: FeedbackDAL — Boundary Values (Boundary Value Analysis)
+# BB-10: Playlist Service — Boundary Values (Boundary Value Analysis)
 # ==========================================================================
 
-class TestFeedbackBoundaryValues:
+class TestPlaylistBoundaryValues:
     """
     Technique: BOUNDARY VALUE ANALYSIS
-    
-    Tests edge cases for feedback data:
-    - Very short message (minimum length)
-    - Very long message
-    - Special characters in fields
+
+    Tests edge cases for playlist data:
+    - Empty playlist (0 tracks)
+    - Playlist with many tracks
+    - Track with special characters
+    - Remove track at boundary indices
     """
 
-    @pytest.mark.asyncio
-    async def test_minimal_length_message(self, feedback_dal):
-        """A single-character message should still be saved."""
-        fb_id = await feedback_dal.save_feedback(
-            "X", "x@t.com", "Other", "A"
+    def test_empty_playlist_creation(self, playlist_service):
+        """A playlist with zero tracks should be created successfully."""
+        result = playlist_service.create_playlist("bb-user-010", "Empty", [])
+        assert result["track_count"] == 0
+        assert result["tracks"] == []
+
+    def test_playlist_with_many_tracks(self, playlist_service):
+        """A playlist with 50 tracks should handle all of them."""
+        tracks = [
+            {"track_name": f"Song {i}", "artist_name": f"Artist {i}"}
+            for i in range(50)
+        ]
+        result = playlist_service.create_playlist("bb-user-011", "Big Playlist", tracks)
+        assert result["track_count"] == 50
+        assert len(result["tracks"]) == 50
+
+    def test_special_characters_in_names(self, playlist_service):
+        """Track names with unicode and special characters should be stored intact."""
+        result = playlist_service.create_playlist(
+            "bb-user-012", "Special 🎵 Chars",
+            [{"track_name": "It's a 'Test' — \"Song\" <#1> & More 🎶", "artist_name": "O'Brien"}]
         )
-        assert fb_id > 0
+        assert "🎵" in result["name"]
+        assert "O'Brien" in result["tracks"][0]["artist_name"]
+        assert "🎶" in result["tracks"][0]["track_name"]
 
-        result = await feedback_dal.get_all_feedback()
-        assert result[0].message == "A"
-
-    @pytest.mark.asyncio
-    async def test_long_message(self, feedback_dal):
-        """A very long message (5000 chars) should be stored fully."""
-        long_msg = "x" * 5000
-        fb_id = await feedback_dal.save_feedback(
-            "Long", "long@test.com", "General Feedback", long_msg
+    def test_remove_first_track(self, playlist_service):
+        """Removing the first track (index 0) should work correctly."""
+        created = playlist_service.create_playlist(
+            "bb-user-013", "Three Songs",
+            [
+                {"track_name": "First", "artist_name": "A"},
+                {"track_name": "Second", "artist_name": "B"},
+                {"track_name": "Third", "artist_name": "C"},
+            ]
         )
-        assert fb_id > 0
+        result = playlist_service.remove_track("bb-user-013", created["id"], 0)
+        assert result["track_count"] == 2
+        assert result["tracks"][0]["track_name"] == "Second"
 
-        result = await feedback_dal.get_all_feedback()
-        assert len(result[0].message) == 5000
-
-    @pytest.mark.asyncio
-    async def test_special_characters(self, feedback_dal):
-        """Special characters (quotes, unicode) should be handled safely."""
-        fb_id = await feedback_dal.save_feedback(
-            "O'Brien", "o'brien@test.com", "Other", 
-            "It's great! 🎵 \"Love\" the <app> & features."
+    def test_remove_last_track(self, playlist_service):
+        """Removing the last track should work correctly."""
+        created = playlist_service.create_playlist(
+            "bb-user-014", "Two Songs",
+            [
+                {"track_name": "First", "artist_name": "A"},
+                {"track_name": "Last", "artist_name": "B"},
+            ]
         )
-        assert fb_id > 0
+        result = playlist_service.remove_track("bb-user-014", created["id"], 1)
+        assert result["track_count"] == 1
+        assert result["tracks"][0]["track_name"] == "First"
 
-        result = await feedback_dal.get_all_feedback()
-        assert "O'Brien" in result[0].name
-        assert "🎵" in result[0].message
+    def test_remove_out_of_range_raises(self, playlist_service):
+        """Removing at an out-of-range index should raise an error."""
+        created = playlist_service.create_playlist(
+            "bb-user-015", "One Song",
+            [{"track_name": "Only", "artist_name": "One"}]
+        )
+        with pytest.raises(IndexError):
+            playlist_service.remove_track("bb-user-015", created["id"], 5)
