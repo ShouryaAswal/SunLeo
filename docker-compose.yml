@@ -11,26 +11,36 @@ services:
     ports:
       - "8501:8501"
     environment:
-      # Use ytconverter container directly as the gateway for now
-      - API_GATEWAY_URL=http://localhost:8000
+      - API_GATEWAY_URL=http://ytconverter:8000
+      - RECOMMENDATION_API_URL=http://recommendation:8001
+      - CHATBOT_API_URL=http://chatbot:8002
       - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
     volumes:
-      - ./frontend/app:/app/app       # Hot reloading for local development
+      - ./frontend/app:/app/app
       - ./frontend/assets:/app/assets
     depends_on:
-      # - api-gateway
-      # - ytconverter
-      - redis
+      ytconverter:
+        condition: service_healthy
+      recommendation:
+        condition: service_healthy
+      chatbot:
+        condition: service_healthy
     command: streamlit run app/home.py --server.port=8501 --server.address=0.0.0.0
 
   # ---------------------------------------------
-  # Message Broker/Cache (Redis)
-  # Central dependency for async task queues and rate limiting
+  # Message Broker/Cache (Redis) — reserved for future use
   # ---------------------------------------------
   redis:
     image: redis:alpine
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
 
   # ---------------------------------------------
   # Conversion Service Worker (yt-dlp + FFmpeg)
@@ -44,8 +54,12 @@ services:
       - REDIS_URL=redis://redis:6379/0
     volumes:
       - ./backend/ytconverter/downloads:/app/downloads
-    depends_on:
-      - redis
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   # ---------------------------------------------
   # Recommendation / Discovery Service
@@ -57,12 +71,23 @@ services:
     ports:
       - "8001:8001"
     environment:
-      - LASTFM_API_KEY=${LASTFM_API_KEY:-}
+      - API_GATEWAY_URL=http://ytconverter:8000
+    env_file:
+      - .env
+    volumes:
+      - ./backend/recommendation_service/app:/app/app
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     depends_on:
-      - redis
+      ytconverter:
+        condition: service_healthy
 
   # ---------------------------------------------
-  # Chatbot DJ Service (Groq + LangChain)
+  # Chatbot DJ Service (Groq + Firestore)
   # ---------------------------------------------
   chatbot:
     build:
@@ -71,9 +96,19 @@ services:
     ports:
       - "8002:8002"
     environment:
-      - GROQ_API_KEY=${GROQ_API_KEY:-}
       - RECOMMENDATION_API_URL=http://recommendation:8001
-      - YTCONVERTER_API_URL=http://ytconverter:8000
+      - API_GATEWAY_URL=http://ytconverter:8000
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/sunleo-d0820-firebase-adminsdk-fbsvc-3f8a4da36d.json
+    env_file:
+      - .env
+    volumes:
+      - ./backend/chatbot_service/app:/app/app
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     depends_on:
-      - redis
-      - recommendation
+      recommendation:
+        condition: service_healthy
