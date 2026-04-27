@@ -18,9 +18,12 @@ from typing import Any
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 
-# Load root .env (app/ → chatbot_service/ → backend/ → project root)
-_ROOT_ENV = Path(__file__).parents[3] / ".env"
-load_dotenv(_ROOT_ENV)
+# Load root .env (works locally; in Docker, env vars come from compose env_file)
+try:
+    _ROOT_ENV = Path(__file__).parents[3] / ".env"
+    load_dotenv(_ROOT_ENV)
+except (IndexError, OSError):
+    pass
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -53,13 +56,31 @@ class ChatResponse(BaseModel):
 
 @app.get("/healthz")
 async def healthz():
-    return {"status": "ok"}
+    return {"status": "ok", "service": "chatbot"}
+
+
+@app.get("/llm-status/{session_id}")
+async def llm_status(session_id: str):
+    from .llm_client import get_session_provider
+    return {
+        "session_id": session_id,
+        "active_provider": get_session_provider(session_id),
+    }
 
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    result = await run_agent(request.message, request.session_id, request.user_uid)
-    return ChatResponse(reply=result["reply"], actions=result.get("actions", []))
+    try:
+        result = await run_agent(request.message, request.session_id, request.user_uid)
+        return ChatResponse(reply=result["reply"], actions=result.get("actions", []))
+    except Exception as exc:
+        import traceback
+        print(f"[SunLeo Chat ERROR] Unhandled exception in /chat: {exc}")
+        traceback.print_exc()
+        return ChatResponse(
+            reply="🎵 Oops! Something went wrong on my end. Please try again in a moment.",
+            actions=[],
+        )
 
 
 # ── Playlist models ───────────────────────────────────────────────────────────
@@ -149,3 +170,4 @@ def _serialise(obj):
     if hasattr(obj, "isoformat"):
         return obj.isoformat()
     return obj
+

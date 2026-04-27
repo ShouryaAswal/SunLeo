@@ -162,3 +162,8 @@ async def download(job_id: str):
         media_type="audio/mpeg",
         content_disposition_type="inline"
     )
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok", "service": "ytconverter", "active_jobs": len(jobs)}

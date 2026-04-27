@@ -45,20 +45,51 @@ def _playlists_ref(uid: str):
     return get_db().collection("users").document(uid).collection("playlists")
 
 
+def _track_key(track: dict) -> tuple[str, str]:
+    """Normalised (track_name, artist_name) for deduplication."""
+    return (
+        track.get("track_name", "").strip().lower(),
+        track.get("artist_name", "").strip().lower(),
+    )
+
+
+def _dedupe_tracks(existing: list[dict], new_tracks: list[dict]) -> tuple[list[dict], int]:
+    """
+    Return (tracks_to_add, skipped_count).
+    Duplicates are identified by normalised (track_name, artist_name).
+    """
+    existing_keys = {_track_key(t) for t in existing}
+    to_add: list[dict] = []
+    skipped = 0
+    for t in new_tracks:
+        key = _track_key(t)
+        if key in existing_keys:
+            skipped += 1
+        else:
+            existing_keys.add(key)
+            to_add.append(t)
+    return to_add, skipped
+
+
 # ── CRUD ─────────────────────────────────────────────────────────────────────
 
 def create_playlist(uid: str, name: str, tracks: list[dict]) -> dict:
     """Create a new playlist and return its full document."""
+    # Dedupe within the provided tracks themselves
+    deduped, skipped = _dedupe_tracks([], tracks)
+
     playlist_id = str(uuid.uuid4())
     doc: dict[str, Any] = {
         "name": name,
         "created_at": _now(),
         "updated_at": _now(),
-        "track_count": len(tracks),
-        "tracks": tracks,
+        "track_count": len(deduped),
+        "tracks": deduped,
     }
     _playlist_ref(uid, playlist_id).set(doc)
     doc["id"] = playlist_id
+    doc["added"] = len(deduped)
+    doc["skipped_duplicates"] = skipped
     return doc
 
 
@@ -88,14 +119,15 @@ def get_playlist(uid: str, playlist_id: str) -> dict | None:
 
 
 def add_tracks(uid: str, playlist_id: str, tracks: list[dict]) -> dict:
-    """Append tracks to an existing playlist."""
+    """Append tracks to an existing playlist, skipping duplicates."""
     ref = _playlist_ref(uid, playlist_id)
     doc = ref.get()
     if not doc.exists:
         raise ValueError(f"Playlist {playlist_id} not found for user {uid}")
 
     current: list = doc.to_dict().get("tracks", [])
-    updated = current + tracks
+    to_add, skipped = _dedupe_tracks(current, tracks)
+    updated = current + to_add
     ref.update({
         "tracks": updated,
         "track_count": len(updated),
@@ -103,6 +135,8 @@ def add_tracks(uid: str, playlist_id: str, tracks: list[dict]) -> dict:
     })
     data = ref.get().to_dict()
     data["id"] = playlist_id
+    data["added"] = len(to_add)
+    data["skipped_duplicates"] = skipped
     return data
 
 
