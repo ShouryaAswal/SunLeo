@@ -164,6 +164,74 @@ async def download(job_id: str):
     )
 
 
-@app.get("/healthz")
-async def healthz():
-    return {"status": "ok", "service": "ytconverter", "active_jobs": len(jobs)}
+# ── Audio Editor endpoints ────────────────────────────────────────────────────
+
+from fastapi import File, UploadFile, Form
+from fastapi.responses import Response
+from .audio_editor import EditParams, process_audio, estimate_sizes
+
+
+@app.post("/audio/edit")
+async def audio_edit(
+    file: UploadFile = File(...),
+    trim_start_ms: int = Form(0),
+    trim_end_ms: int = Form(-1),
+    fade_in_ms: int = Form(0),
+    fade_out_ms: int = Form(0),
+    bass_boost_db: float = Form(0.0),
+    treble_boost_db: float = Form(0.0),
+    volume_change_db: float = Form(0.0),
+    speed_factor: float = Form(1.0),
+    output_format: str = Form("mp3"),
+    output_quality: str = Form("192"),
+):
+    """Process an audio file with the given edit parameters."""
+    file_bytes = await file.read()
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(file_bytes) > 50 * 1024 * 1024:  # 50 MB limit
+        raise HTTPException(status_code=400, detail="File too large (max 50 MB)")
+
+    params = EditParams(
+        trim_start_ms=trim_start_ms,
+        trim_end_ms=trim_end_ms if trim_end_ms >= 0 else None,
+        fade_in_ms=fade_in_ms,
+        fade_out_ms=fade_out_ms,
+        bass_boost_db=bass_boost_db,
+        treble_boost_db=treble_boost_db,
+        volume_change_db=volume_change_db,
+        speed_factor=speed_factor,
+        output_format=output_format,
+        output_quality=output_quality,
+    )
+
+    try:
+        result_bytes, ext, mime = await asyncio.to_thread(process_audio, file_bytes, params)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Processing failed: {exc}")
+
+    filename = f"sunleo_edited.{ext}"
+    return Response(
+        content=result_bytes,
+        media_type=mime,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(result_bytes)),
+        },
+    )
+
+
+@app.post("/audio/estimate")
+async def audio_estimate(file: UploadFile = File(...)):
+    """Estimate output file sizes for all format/quality combinations."""
+    file_bytes = await file.read()
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    try:
+        result = await asyncio.to_thread(estimate_sizes, file_bytes)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Estimation failed: {exc}")
+
+    return result
+

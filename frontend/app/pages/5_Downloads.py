@@ -176,18 +176,24 @@ for source_key, label in sources.items():
                     download_url = s_data.get("download_url", "")
                     if download_url:
                         full_url = f"{GATEWAY_URL}{download_url}"
-                        try:
-                            audio_resp = requests.get(full_url, timeout=10)
-                            if audio_resp.status_code == 200:
-                                st.download_button(
-                                    "📥 Save",
-                                    data=audio_resp.content,
-                                    file_name=f"{actual_title}.mp3",
-                                    mime="audio/mpeg",
-                                    key=f"save_{job_id}",
-                                )
-                        except Exception:
-                            st.caption("⚠️ File unavailable")
+                        btn_save, btn_edit = st.columns(2)
+                        with btn_save:
+                            try:
+                                audio_resp = requests.get(full_url, timeout=10)
+                                if audio_resp.status_code == 200:
+                                    st.download_button(
+                                        "📥",
+                                        data=audio_resp.content,
+                                        file_name=f"{actual_title}.mp3",
+                                        mime="audio/mpeg",
+                                        key=f"save_{job_id}",
+                                    )
+                            except Exception:
+                                st.caption("⚠️")
+                        with btn_edit:
+                            if st.button("✂️", key=f"edit_{job_id}", help="Open in Audio Editor"):
+                                st.session_state.editor_selected_job = job_id
+                                st.switch_page("pages/6_AudioEditor.py")
 
                 elif status == "failed":
                     err = s_data.get("error", "") if 's_data' in dir() else ""
