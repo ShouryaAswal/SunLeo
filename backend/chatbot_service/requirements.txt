@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 groq
+openai>=1.30.0
 requests
 google-cloud-firestore
 firebase-admin

@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
+import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import httpx
 from dotenv import load_dotenv
@@ -21,13 +23,17 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-# ── Load root .env (two levels above this file: app/ → recommendation_service/ → backend/ → root)
-_ROOT_ENV = Path(__file__).parents[3] / ".env"
-load_dotenv(_ROOT_ENV)
+# ── Load root .env (works locally; in Docker, env vars come from compose env_file)
+try:
+    _ROOT_ENV = Path(__file__).parents[3] / ".env"
+    load_dotenv(_ROOT_ENV)
+except (IndexError, OSError):
+    pass  # Inside Docker — env vars are injected by docker-compose
 
 LASTFM_API_KEY    = os.getenv("LASTFM_API_KEY", "")
 YOUTUBE_API_KEY   = os.getenv("YOUTUBE_API_KEY", "")
 YTCONVERTER_URL   = os.getenv("API_GATEWAY_URL", "http://127.0.0.1:8000")
+CHATBOT_URL       = os.getenv("CHATBOT_API_URL", "http://127.0.0.1:8002")
 LASTFM_BASE       = "https://ws.audioscrobbler.com/2.0/"
 ITUNES_BASE       = "https://itunes.apple.com/search"
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
@@ -118,6 +124,39 @@ MOOD_TAGS = [
     "rock", "pop", "jazz", "classical", "metal", "r&b",
 ]
 
+# Cache of total pages per tag: {tag: (total_pages, timestamp)}
+_tag_page_cache: Dict[str, Tuple[int, float]] = {}
+_CACHE_TTL = 3600  # 1 hour
+
+
+async def _get_total_pages(tag: str, client: httpx.AsyncClient) -> int:
+    """Get total pages for a tag from cache or Last.fm API."""
+    cached = _tag_page_cache.get(tag)
+    if cached and (time.time() - cached[1]) < _CACHE_TTL:
+        return cached[0]
+
+    try:
+        resp = await client.get(
+            LASTFM_BASE,
+            params={
+                "method": "tag.getTopTracks",
+                "tag": tag,
+                "api_key": LASTFM_API_KEY,
+                "format": "json",
+                "limit": 20,
+                "page": 1,
+            },
+        )
+        if resp.status_code == 200:
+            attrs = resp.json().get("tracks", {}).get("@attr", {})
+            total = int(attrs.get("totalPages", 5))
+            total = min(total, 10)  # Cap at 10 pages
+            _tag_page_cache[tag] = (total, time.time())
+            return total
+    except Exception:
+        pass
+    return 5  # default fallback
+
 
 @app.get("/moods")
 async def get_available_moods():
@@ -156,16 +195,25 @@ async def _fetch_itunes_artwork(
 async def get_mood_tracks(
     tag: str = Query(..., description="Mood or genre tag"),
     limit: int = Query(20, ge=1, le=50),
+    page: int = Query(0, ge=0, description="Page number (0 = random page for fresh results)"),
 ):
-    """Get top tracks for a mood/genre via Last.fm, enriched with iTunes artwork."""
+    """Get top tracks for a mood/genre via Last.fm, enriched with iTunes artwork.
+    Set page=0 for random results, or a specific page number for deterministic results."""
     if not LASTFM_API_KEY:
         raise HTTPException(
             status_code=503,
             detail="Last.fm API key not configured. Set LASTFM_API_KEY in .env",
         )
 
-    # Step 1 — Last.fm: get track list for tag
+    # Step 1 — Determine which page to fetch
     async with httpx.AsyncClient(timeout=10) as lfm_client:
+        if page == 0:
+            total_pages = await _get_total_pages(tag, lfm_client)
+            actual_page = random.randint(1, max(1, total_pages))
+        else:
+            actual_page = page
+
+        # Step 2 — Last.fm: get track list for tag
         try:
             resp = await lfm_client.get(
                 LASTFM_BASE,
@@ -175,6 +223,7 @@ async def get_mood_tracks(
                     "api_key": LASTFM_API_KEY,
                     "format": "json",
                     "limit": limit,
+                    "page": actual_page,
                 },
             )
             resp.raise_for_status()
@@ -185,7 +234,10 @@ async def get_mood_tracks(
     if not tracks_raw:
         return []
 
-    # Step 2 — iTunes: fetch artwork concurrently (max 5 at a time)
+    # Step 3 — Shuffle for extra variety within the page
+    random.shuffle(tracks_raw)
+
+    # Step 4 — iTunes: fetch artwork concurrently (max 5 at a time)
     sem = asyncio.Semaphore(5)
     async with httpx.AsyncClient(timeout=5) as itunes_client:
         artwork_tasks = [
@@ -199,7 +251,7 @@ async def get_mood_tracks(
         ]
         artworks = await asyncio.gather(*artwork_tasks, return_exceptions=True)
 
-    # Step 3 — Assemble results
+    # Step 5 — Assemble results
     results = []
     for t, art in zip(tracks_raw, artworks):
         name   = t.get("name", "Unknown")
@@ -216,13 +268,91 @@ async def get_mood_tracks(
     return results
 
 
+# ─────────────────────────── Personalized Mood Endpoint ───────────────────────
+
+@app.get("/mood/personalized", response_model=List[TrackInfo])
+async def get_personalized_mood_tracks(
+    tag: str = Query(..., description="Mood or genre tag"),
+    user_uid: str = Query("", description="Firebase UID for personalization"),
+    limit: int = Query(20, ge=1, le=50),
+):
+    """Personalized mood tracks: filters out songs the user already has in playlists,
+    and enriches with similar-artist discovery based on their library."""
+
+    # Step 1 — Get base mood tracks (random page for freshness)
+    base_tracks = await get_mood_tracks(tag=tag, limit=limit + 10, page=0)
+
+    if not user_uid:
+        return base_tracks[:limit]
+
+    # Step 2 — Fetch user's existing playlist tracks for filtering
+    user_track_keys: set[tuple[str, str]] = set()
+    user_artists: set[str] = set()
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            resp = await client.get(f"{CHATBOT_URL}/playlists/{user_uid}")
+            if resp.status_code == 200:
+                playlists = resp.json()
+                for pl in playlists:
+                    for t in pl.get("tracks", []):
+                        tn = t.get("track_name", "").strip().lower()
+                        an = t.get("artist_name", "").strip().lower()
+                        user_track_keys.add((tn, an))
+                        if an:
+                            user_artists.add(an)
+    except Exception:
+        pass  # If chatbot service is down, skip personalization
+
+    # Step 3 — Filter out tracks user already has
+    filtered = [
+        t for t in base_tracks
+        if (t.track_name.strip().lower(), t.artist_name.strip().lower()) not in user_track_keys
+    ]
+
+    # Step 4 — If user has artists, try to discover similar artists via Last.fm
+    if user_artists and LASTFM_API_KEY and len(filtered) < limit:
+        sample_artists = random.sample(list(user_artists), min(3, len(user_artists)))
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                for artist in sample_artists:
+                    resp = await client.get(
+                        LASTFM_BASE,
+                        params={
+                            "method": "artist.getTopTracks",
+                            "artist": artist,
+                            "api_key": LASTFM_API_KEY,
+                            "format": "json",
+                            "limit": 5,
+                        },
+                    )
+                    if resp.status_code == 200:
+                        artist_tracks = resp.json().get("toptracks", {}).get("track", [])
+                        for at in artist_tracks:
+                            name = at.get("name", "Unknown")
+                            art_name = at.get("artist", {}).get("name", "Unknown")
+                            key = (name.strip().lower(), art_name.strip().lower())
+                            if key not in user_track_keys:
+                                filtered.append(TrackInfo(
+                                    track_name=name,
+                                    artist_name=art_name,
+                                    search_query=f"{name} {art_name} audio",
+                                ))
+                                user_track_keys.add(key)
+                            if len(filtered) >= limit:
+                                break
+                    if len(filtered) >= limit:
+                        break
+        except Exception:
+            pass
+
+    random.shuffle(filtered)
+    return filtered[:limit]
+
+
 # ─────────────────────────── YouTube URL Resolution ───────────────────────────
 
 async def _find_youtube_url_via_api(query: str) -> Optional[str]:
-    """
-    Primary: YouTube Data API v3 with music category filter.
-    Costs 100 quota units per call; free quota = 10,000/day → ~100 searches/day.
-    """
+    """Primary: YouTube Data API v3 with music category filter."""
     if not YOUTUBE_API_KEY:
         return None
     try:
@@ -243,19 +373,15 @@ async def _find_youtube_url_via_api(query: str) -> Optional[str]:
                 if items:
                     video_id = items[0]["id"]["videoId"]
                     return f"https://www.youtube.com/watch?v={video_id}"
-            # Quota exceeded or forbidden → fall through to yt-dlp
     except Exception:
         pass
     return None
 
 
 def _find_youtube_url_via_ytdlp(query: str) -> Optional[str]:
-    """
-    Fallback: yt-dlp ytsearch (no API key needed; slower ~3-5 s; may be rate-limited).
-    Runs synchronously — call via asyncio.to_thread().
-    """
+    """Fallback: yt-dlp ytsearch (no API key needed; slower ~3-5 s)."""
     try:
-        import yt_dlp  # already in venv
+        import yt_dlp
 
         ydl_opts = {
             "quiet": True,
@@ -284,7 +410,7 @@ async def resolve_and_queue(request: ResolveQueueRequest):
       1. Build search query from track + artist (or use override)
       2. Try YouTube Data API v3  (primary — fast, reliable)
       3. Try yt-dlp ytsearch      (fallback — no key needed)
-      4. If still no URL → 404 (frontend shows friendly message, no crash)
+      4. If still no URL → 404
       5. POST the YouTube URL to ytconverter → returns job_id
     """
     query = request.search_query.strip() or f"{request.track_name} {request.artist_name} audio"

@@ -1,43 +1,63 @@
 """
-SunLeo DJ Agent — powered by Groq's native function-calling API.
+SunLeo DJ Agent — multi-provider LLM agent with Groq → Gemini fallback.
 
-Uses the `groq` SDK directly (OpenAI-compatible tool_call protocol).
+Uses the `openai` SDK via llm_client.py for both providers.
 No LangChain, no LangGraph — just clean, reliable code.
 """
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from collections import defaultdict
 
-from groq import Groq
-
 from . import tools as T
+from .llm_client import chat_completion
+
+log = logging.getLogger("sunleo.agent")
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """You are SunLeo DJ 🎵, a friendly and enthusiastic AI music assistant.
 
 Your capabilities:
-1. SEARCH — Find songs by name, artist, or album
-2. DISCOVER — Suggest songs by mood/activity (chill, workout, sad, happy, study, party, sleep, road trip)
-3. DOWNLOAD — Download songs as MP3 (always confirm with the user first!)
-4. PLAYLISTS — Create, view, and manage playlists
-5. BULK DOWNLOAD — Download all songs in a playlist at once
+1. SEARCH — Find songs by name, artist, or album using search_tracks
+2. DISCOVER — Suggest songs by mood/activity using get_mood_tracks
+3. DOWNLOAD — Download songs as MP3. ALWAYS confirm with the user before downloading!
+4. PLAYLISTS — Create, view, update, and manage playlists (create, add tracks, remove tracks, delete)
+5. BULK DOWNLOAD — Download all songs in a playlist using bulk_download_playlist
+6. FEEDBACK — Send feedback on behalf of the user using send_feedback
+7. CHECK STATUS — Check download progress using check_pending_downloads
 
 Behaviour rules:
 - Always present song options BEFORE downloading. Never auto-download.
-- Format track suggestions as numbered lists with artist names.
-- When the user says "download #3" or "download all", execute the download.
-- Map natural moods: "something for studying" → mood="study"
+- Format track suggestions as numbered lists: "1. Song Name — Artist Name"
 - Be conversational, use music emojis 🎵🎶🎸🥁🎤, keep responses concise.
 - If user wants a playlist, ask for a name if not provided.
 - For bulk downloads, confirm playlist name + track count before downloading.
+- NEVER show raw JSON, tool call data, or internal errors to the user.
+- If a tool fails, apologize and explain in simple terms.
+
+INDEXED SELECTION (important):
+- When you show tracks, always number them 1, 2, 3, etc.
+- When the user says "download #3", "download 1, 3, 5", or "download all", use the download_tracks_by_index tool. Do NOT try to recall track names from memory.
+- When the user says "save these as <name>", use save_last_tracks_as_playlist.
+- When the user says "add these to <playlist>", use add_last_tracks_to_playlist. First call list_playlists to get the playlist_id.
+- "download all" means pass indexes [1, 2, 3, ..., N] where N is the number of tracks shown.
+
+PLAYLIST MANAGEMENT:
+- To delete, remove tracks, or get details: first call list_playlists to find the playlist_id.
+- To remove a track: call remove_track_from_playlist with the 0-based track_index. First call get_playlist_details to see tracks.
+- Always confirm destructive actions (delete, remove) before executing.
+
+FEEDBACK:
+- If the user wants to send feedback or report a bug, use send_feedback. Ask for missing details: name, email, category, message.
+- Categories: "Bug Report", "Feature Request", "General Feedback", "Other"
 
 Mood mapping:
   Chill/Relax/Unwind → chill | Gym/Workout/Run → workout
-  Sad/Heartbreak → sad | Happy/Joy → happy | Study/Focus → study
+  Sad/Heartbreak → sad | Happy/Joy → happy | Study/Focus → study/focus
   Party/Dance/Hype → party | Sleep/Night/Calm → sleep | Drive → road trip"""
 
 # ── Tool schemas (OpenAI function-calling format) ─────────────────────────────
@@ -62,7 +82,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_mood_tracks",
-            "description": "Get track recommendations for a mood or activity. Moods: chill, workout, sad, happy, study, focus, party, sleep, road trip.",
+            "description": "Get track recommendations for a mood or activity. Moods: chill, workout, sad, happy, study, focus, party, sleep, road trip, indie, lo-fi, jazz.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -76,8 +96,16 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "get_available_moods",
+            "description": "Get the list of available mood/genre tags for discovery. No parameters needed.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "download_track",
-            "description": "Resolve a track to YouTube and queue MP3 download. ONLY call after user confirms.",
+            "description": "Download a single track by name and artist. ONLY call after user confirms.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -91,27 +119,81 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "check_download_status",
-            "description": "Check download status for job IDs.",
+            "name": "download_tracks_by_index",
+            "description": "Download tracks by their number from the most recently shown list. Use when user says 'download #2', 'download 1,3,5', or 'download all'.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "job_ids_json": {"type": "string", "description": "JSON array of job_id strings"},
+                    "indexes": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "1-based track numbers from the last shown list",
+                    },
                 },
-                "required": ["job_ids_json"],
+                "required": ["indexes"],
             },
         },
     },
     {
         "type": "function",
         "function": {
+            "name": "check_download_status",
+            "description": "Check download status for specific job IDs.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "job_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of job_id strings to check",
+                    },
+                },
+                "required": ["job_ids"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_pending_downloads",
+            "description": "Check status of all pending downloads from this chat session. No arguments needed.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "create_playlist",
-            "description": "Create a named playlist for the user.",
+            "description": "Create a new empty playlist. Use save_last_tracks_as_playlist to create with tracks from a search.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Playlist name"},
-                    "tracks_json": {"type": "string", "description": "JSON array of track objects", "default": "[]"},
+                    "tracks": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                        "description": "Optional tracks with track_name and artist_name",
+                        "default": [],
+                    },
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_last_tracks_as_playlist",
+            "description": "Create a playlist from the most recently shown track list. Use when user says 'save these as <name>'. Optionally specify track numbers to include only certain tracks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Playlist name"},
+                    "indexes": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Optional 1-based track numbers to include. Omit to include all.",
+                    },
                 },
                 "required": ["name"],
             },
@@ -121,14 +203,37 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "add_to_playlist",
-            "description": "Add tracks to an existing playlist.",
+            "description": "Add specific tracks (by name/artist) to an existing playlist.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "playlist_id": {"type": "string"},
-                    "tracks_json": {"type": "string", "description": "JSON array of track objects"},
+                    "tracks": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                        "description": "Array of track objects with track_name and artist_name",
+                    },
                 },
-                "required": ["playlist_id", "tracks_json"],
+                "required": ["playlist_id", "tracks"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_last_tracks_to_playlist",
+            "description": "Add tracks from the most recently shown list to an existing playlist. Use when user says 'add these to <playlist>'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "playlist_id": {"type": "string", "description": "The playlist ID to add tracks to"},
+                    "indexes": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Optional 1-based track numbers. Omit to add all.",
+                    },
+                },
+                "required": ["playlist_id"],
             },
         },
     },
@@ -136,8 +241,51 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "list_playlists",
-            "description": "List all playlists belonging to the current user. No arguments needed.",
+            "description": "List all playlists belonging to the current user.",
             "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_playlist_details",
+            "description": "Get full details of a specific playlist including all its tracks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "playlist_id": {"type": "string", "description": "The playlist ID"},
+                },
+                "required": ["playlist_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_playlist",
+            "description": "Delete a user's playlist. ALWAYS confirm before deleting. Get playlist_id from list_playlists first.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "playlist_id": {"type": "string", "description": "The playlist ID to delete"},
+                },
+                "required": ["playlist_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remove_track_from_playlist",
+            "description": "Remove a single track from a playlist by its 0-based index. Call get_playlist_details first to see track indexes.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "playlist_id": {"type": "string"},
+                    "track_index": {"type": "integer", "description": "0-based index of the track to remove"},
+                },
+                "required": ["playlist_id", "track_index"],
+            },
         },
     },
     {
@@ -154,18 +302,47 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "send_feedback",
+            "description": "Send user feedback or bug report via email. Ask user for details if missing.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "user_name": {"type": "string", "description": "User's name"},
+                    "user_email": {"type": "string", "description": "User's email address"},
+                    "category": {"type": "string", "enum": ["Bug Report", "Feature Request", "General Feedback", "Other"]},
+                    "message": {"type": "string", "description": "Feedback message"},
+                    "rating": {"type": "integer", "description": "Rating 1-5", "default": 5},
+                },
+                "required": ["user_name", "user_email", "category", "message"],
+            },
+        },
+    },
 ]
 
 # ── Tool dispatcher ───────────────────────────────────────────────────────────
 
 # Tools that need user_uid injected
-_UID_TOOLS = {"create_playlist", "add_to_playlist", "list_playlists", "bulk_download_playlist"}
+_UID_TOOLS = {
+    "create_playlist", "add_to_playlist", "add_last_tracks_to_playlist",
+    "list_playlists", "get_playlist_details", "delete_playlist",
+    "remove_track_from_playlist", "bulk_download_playlist",
+    "save_last_tracks_as_playlist",
+}
+# Tools that need session_id injected
+_SESSION_TOOLS = {
+    "download_tracks_by_index", "save_last_tracks_as_playlist",
+    "add_last_tracks_to_playlist", "check_pending_downloads",
+}
 
-def _dispatch_tool(name: str, args: dict, user_uid: str) -> str:
+def _dispatch_tool(name: str, args: dict, user_uid: str, session_id: str) -> str:
     """Call the matching tool function and return its JSON result."""
-    # Inject user_uid for playlist tools
     if name in _UID_TOOLS:
         args["user_uid"] = user_uid
+    if name in _SESSION_TOOLS:
+        args["session_id"] = session_id
 
     fn = getattr(T, name, None)
     if fn is None:
@@ -176,10 +353,54 @@ def _dispatch_tool(name: str, args: dict, user_uid: str) -> str:
     except Exception as exc:
         return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
 
+# ── Session state (in-process) ────────────────────────────────────────────────
+
+_session_state: dict[str, dict] = defaultdict(lambda: {
+    "last_tracks": [],
+    "last_playlist": None,
+    "pending_downloads": [],
+})
+
+def get_session_state(session_id: str) -> dict:
+    """Get the session state for a given session (used by tools)."""
+    return _session_state[session_id]
+
+def _update_session_from_tool_result(session_id: str, tool_name: str, result_str: str):
+    """Update session state based on tool results."""
+    try:
+        result = json.loads(result_str)
+    except (json.JSONDecodeError, TypeError):
+        return
+
+    state = _session_state[session_id]
+
+    # Store search/mood results as last_tracks
+    if tool_name in ("search_tracks", "get_mood_tracks") and isinstance(result, list):
+        state["last_tracks"] = result
+
+    # Store created playlist context
+    if tool_name in ("create_playlist", "save_last_tracks_as_playlist") and isinstance(result, dict) and "id" in result:
+        state["last_playlist"] = {"id": result["id"], "name": result.get("name", "")}
+
+    # Track download job IDs
+    if tool_name == "download_track" and isinstance(result, dict) and result.get("job_id"):
+        state["pending_downloads"].append(result)
+
+    if tool_name == "download_tracks_by_index" and isinstance(result, list):
+        for r in result:
+            if isinstance(r, dict) and r.get("job_id"):
+                state["pending_downloads"].append(r)
+
+    if tool_name == "bulk_download_playlist" and isinstance(result, list):
+        for r in result:
+            if isinstance(r, dict) and r.get("job_id"):
+                state["pending_downloads"].append(r)
+
+
 # ── Conversation memory (in-process) ─────────────────────────────────────────
 
 _sessions: dict[str, list[dict]] = defaultdict(list)
-MAX_HISTORY = 20  # keep last 20 messages per session
+MAX_HISTORY = 20
 
 def _get_messages(session_id: str) -> list[dict]:
     return _sessions[session_id]
@@ -187,22 +408,17 @@ def _get_messages(session_id: str) -> list[dict]:
 def _add_message(session_id: str, msg: dict):
     history = _sessions[session_id]
     history.append(msg)
-    # Trim to keep memory bounded (always keep system prompt)
     if len(history) > MAX_HISTORY:
         _sessions[session_id] = history[-MAX_HISTORY:]
 
 # ── Reply sanitizer ──────────────────────────────────────────────────────────
 
-# Patterns that indicate raw tool-call artefacts leaking into the reply
 _TOOL_CALL_PATTERNS = [
-    # Markdown-fenced JSON block containing `function` or `name` key
     re.compile(r'```(?:json)?\s*\{[^`]*?(?:"function"|"tool_call"|"name").*?\}\s*```', re.DOTALL | re.IGNORECASE),
-    # XML-style <tool_call>...</tool_call> tags
     re.compile(r'<tool_call>.*?</tool_call>', re.DOTALL | re.IGNORECASE),
-    # Bare JSON objects on their own line that look like tool invocations
+    re.compile(r'<function=\w+.*?</function>', re.DOTALL | re.IGNORECASE),
     re.compile(r'^\s*\{\s*"(?:type|function|name|tool)"\s*:.*?\}\s*$', re.DOTALL | re.MULTILINE),
 ]
-
 
 def _clean_reply(content: str) -> str:
     """Strip raw tool-call JSON / XML artefacts from the LLM reply."""
@@ -220,20 +436,11 @@ async def run_agent(message: str, session_id: str, user_uid: str = "") -> dict:
     Run the SunLeo DJ agent.
 
     Flow:
-    1. Send user message + tool schemas to Groq
+    1. Send user message + tool schemas to LLM (Groq primary, Gemini fallback)
     2. If model returns tool_calls → execute them, feed results back
     3. Repeat until model returns a final text response (max 6 loops)
     4. Return {reply, actions}
     """
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        return {
-            "reply": "⚠️ Groq API key is not configured. Set `GROQ_API_KEY` in your `.env` file.",
-            "actions": [],
-        }
-
-    client = Groq(api_key=api_key)
-
     # Build conversation
     history = _get_messages(session_id)
     if not history:
@@ -245,20 +452,47 @@ async def run_agent(message: str, session_id: str, user_uid: str = "") -> dict:
     _add_message(session_id, user_msg)
 
     last_content = ""
+    collected_actions: list[dict] = []
 
     # Tool-call loop (max 6 iterations to prevent runaway)
     for _ in range(6):
         try:
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+            response = await chat_completion(
+                session_id=session_id,
                 messages=_get_messages(session_id),
                 tools=TOOL_SCHEMAS,
-                tool_choice="auto",
                 temperature=0.7,
                 max_tokens=1024,
             )
         except Exception as exc:
-            return {"reply": f"⚠️ Groq API error: {exc}", "actions": []}
+            error_str = str(exc)
+            log.error("LLM call failed for session %s: %s", session_id, error_str)
+
+            # tool_use_failed — strip broken messages and retry without tools
+            if "tool_use_failed" in error_str or "failed_generation" in error_str:
+                try:
+                    cleaned = [m for m in _get_messages(session_id)
+                               if not (m.get("role") == "assistant" and m.get("tool_calls"))]
+                    _sessions[session_id] = cleaned
+
+                    fallback = await chat_completion(
+                        session_id=session_id,
+                        messages=cleaned,
+                        tools=None,  # no tools — force text response
+                        temperature=0.7,
+                        max_tokens=1024,
+                    )
+                    fallback_content = fallback.choices[0].message.content or ""
+                    if fallback_content:
+                        _add_message(session_id, {"role": "assistant", "content": fallback_content})
+                        return {"reply": _clean_reply(fallback_content), "actions": collected_actions}
+                except Exception as fallback_exc:
+                    log.error("Tool-use fallback also failed: %s", fallback_exc)
+
+            return {
+                "reply": "🎵 Sorry, I had a hiccup processing that request. Could you try again in a moment?",
+                "actions": [],
+            }
 
         choice = response.choices[0]
         assistant_msg = choice.message
@@ -279,23 +513,50 @@ async def run_agent(message: str, session_id: str, user_uid: str = "") -> dict:
             ]
         _add_message(session_id, msg_dict)
 
-        # Track last non-empty content for fallback
         if assistant_msg.content:
             last_content = assistant_msg.content
 
         # If no tool calls, we have the final answer
         if not assistant_msg.tool_calls:
-            return {"reply": _clean_reply(assistant_msg.content or last_content), "actions": []}
+            return {"reply": _clean_reply(assistant_msg.content or last_content), "actions": collected_actions}
 
         # Execute each tool call and feed results back
         for tc in assistant_msg.tool_calls:
             fn_name = tc.function.name
             try:
                 fn_args = json.loads(tc.function.arguments)
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, TypeError):
+                fn_args = {}
+            if not isinstance(fn_args, dict):
                 fn_args = {}
 
-            result = _dispatch_tool(fn_name, fn_args, user_uid)
+            result = _dispatch_tool(fn_name, fn_args, user_uid, session_id)
+
+            # Update session state from tool results
+            _update_session_from_tool_result(session_id, fn_name, result)
+
+            # Collect download actions for frontend
+            if fn_name in ("download_track", "download_tracks_by_index", "bulk_download_playlist"):
+                try:
+                    parsed = json.loads(result)
+                    if isinstance(parsed, list):
+                        for r in parsed:
+                            if isinstance(r, dict) and r.get("job_id"):
+                                collected_actions.append({
+                                    "type": "download_queued",
+                                    "job_id": r["job_id"],
+                                    "track_name": r.get("track_name", ""),
+                                    "artist_name": r.get("artist_name", ""),
+                                })
+                    elif isinstance(parsed, dict) and parsed.get("job_id"):
+                        collected_actions.append({
+                            "type": "download_queued",
+                            "job_id": parsed["job_id"],
+                            "track_name": parsed.get("track_name", ""),
+                            "artist_name": parsed.get("artist_name", ""),
+                        })
+                except (json.JSONDecodeError, TypeError):
+                    pass
 
             tool_result_msg = {
                 "role": "tool",
@@ -307,5 +568,5 @@ async def run_agent(message: str, session_id: str, user_uid: str = "") -> dict:
     # If we exhausted iterations, return last content
     return {
         "reply": _clean_reply(last_content) or "🎵 I got a bit carried away! Could you try again?",
-        "actions": [],
+        "actions": collected_actions,
     }

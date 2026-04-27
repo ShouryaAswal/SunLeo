@@ -13,8 +13,11 @@ from firebase_admin import credentials, firestore
 _app: firebase_admin.App | None = None
 _db: firestore.Client | None = None
 
-# Project root: app/ → chatbot_service/ → backend/ → root
-_PROJECT_ROOT = Path(__file__).parents[3]
+# Project root: app/ → chatbot_service/ → backend/ → root (local dev only)
+try:
+    _PROJECT_ROOT = Path(__file__).parents[3]
+except IndexError:
+    _PROJECT_ROOT = Path("/app")  # Docker fallback
 
 
 def get_db() -> firestore.Client:

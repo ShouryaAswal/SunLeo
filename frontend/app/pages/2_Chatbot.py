@@ -47,8 +47,8 @@ if "chat_messages" not in st.session_state:
                 "I can help you:\n"
                 "- 🔍 **Search** for any song or artist\n"
                 "- 🎭 **Discover** music by mood (chill, workout, sad, party…)\n"
-                "- ⬇️ **Download** songs as MP3\n"
-                "- 📋 **Create & manage** playlists\n\n"
+                "- ⬇️ **Download** songs as MP3 — just say \"download #2\"\n"
+                "- 📋 **Create & manage** playlists — say \"save these as Chill Vibes\"\n\n"
                 "What are you in the mood for today?"
             ),
         }
@@ -57,6 +57,9 @@ if "chat_messages" not in st.session_state:
 if "session_id" not in st.session_state:
     import uuid
     st.session_state.session_id = str(uuid.uuid4())
+
+if "chatbot_downloads" not in st.session_state:
+    st.session_state.chatbot_downloads = []
 
 # ── quick action prompts ──────────────────────────────────────────────────────
 QUICK_ACTIONS = [
@@ -85,9 +88,23 @@ with col_title:
     """, unsafe_allow_html=True)
 
 with col_actions:
-    if st.button("🗑️ Clear Chat", key="clear_chat"):
-        st.session_state.chat_messages = [st.session_state.chat_messages[0]]
-        st.rerun()
+    btn_col1, btn_col2 = st.columns(2)
+    with btn_col1:
+        if st.button("🗑️ Clear Chat", key="clear_chat"):
+            st.session_state.chat_messages = [st.session_state.chat_messages[0]]
+            st.rerun()
+    with btn_col2:
+        # Show active download count
+        active_count = len(st.session_state.chatbot_downloads)
+        if active_count > 0:
+            st.markdown(
+                f"<div style='text-align:center;padding:6px 0;'>"
+                f"<span style='padding:3px 10px;background:rgba(124,58,237,0.15);"
+                f"border:1px solid rgba(124,58,237,0.3);border-radius:12px;"
+                f"color:#a78bfa;font-size:0.75rem;font-weight:600;'>"
+                f"📥 {active_count} download{'s' if active_count != 1 else ''}</span></div>",
+                unsafe_allow_html=True,
+            )
 
 st.markdown("---")
 
@@ -149,6 +166,27 @@ if message_to_send:
             resp.raise_for_status()
             data = resp.json()
             bot_reply = data.get("reply", "Sorry, I couldn't get a response.")
+
+            # Track any download actions from the chatbot
+            actions = data.get("actions", [])
+            for action in actions:
+                if action.get("type") == "download_queued" and action.get("job_id"):
+                    st.session_state.chatbot_downloads.append({
+                        "job_id": action["job_id"],
+                        "track_name": action.get("track_name", ""),
+                        "artist_name": action.get("artist_name", ""),
+                        "title": action.get("track_name", "Unknown"),
+                        "source": "chatbot",
+                    })
+                    # Also add to discovery_jobs for the Downloads page
+                    if "discovery_jobs" not in st.session_state:
+                        st.session_state.discovery_jobs = []
+                    st.session_state.discovery_jobs.append({
+                        "job_id": action["job_id"],
+                        "title": action.get("track_name", "Unknown"),
+                        "source": "chatbot",
+                    })
+
         except requests.exceptions.ConnectionError:
             bot_reply = (
                 "⚠️ **Chatbot service is not running.** "
@@ -177,6 +215,7 @@ with st.sidebar:
         "📋 Say *\"save these as 'Chill Vibes'\"* to create a playlist",
         "📖 Say *\"show my playlists\"* to see what you've saved",
         "🎭 Name a mood and I'll find the perfect tracks",
+        "📥 Check the **Downloads** page for all your downloads",
     ]
     for tip in tips:
         st.markdown(f"<p style='color:#94a3b8;font-size:0.82rem;margin:0.4rem 0;'>{tip}</p>", unsafe_allow_html=True)
