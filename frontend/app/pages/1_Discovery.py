@@ -4,7 +4,10 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parents[3] / ".env")
+try:
+    load_dotenv(Path(__file__).resolve().parents[3] / ".env")
+except (IndexError, OSError):
+    pass
 
 st.set_page_config(page_title="Sun Leo — Discovery", page_icon="🔍", layout="wide")
 
@@ -28,6 +31,8 @@ if not st.session_state.get("firebase_user"):
     )
     st.stop()
 
+uid = st.session_state["firebase_user"].get("localId", "")
+
 # ──────────────── CONFIG ────────────────
 RECOMMENDATION_API_URL = os.getenv("RECOMMENDATION_API_URL", "http://localhost:8001")
 YTCONVERTER_API_URL    = os.getenv("API_GATEWAY_URL",        "http://127.0.0.1:8000")
@@ -36,18 +41,13 @@ YTCONVERTER_API_URL    = os.getenv("API_GATEWAY_URL",        "http://127.0.0.1:8
 if "discovery_jobs"  not in st.session_state: st.session_state.discovery_jobs  = []
 if "search_results"  not in st.session_state: st.session_state.search_results  = []
 if "mood_results"    not in st.session_state: st.session_state.mood_results    = []
+if "last_mood"       not in st.session_state: st.session_state.last_mood       = None
 
 
 # ═══════════════════════════════════════════════════════
-#  DOWNLOAD HELPER  — defined HERE (before tabs) to avoid
-#  forward-reference NameError when a button is clicked.
+#  DOWNLOAD HELPER
 # ═══════════════════════════════════════════════════════
 def _trigger_download(track: dict, idx: int, source: str):
-    """
-    Delegates the full YouTube-search → download pipeline to the
-    Discovery backend service (/resolve-and-queue), so the frontend
-    stays thin and error-resilient.
-    """
     track_name  = track.get("track_name",  "Unknown")
     artist_name = track.get("artist_name", "Unknown")
     search_query = track.get("search_query", f"{track_name} {artist_name} audio")
@@ -61,7 +61,7 @@ def _trigger_download(track: dict, idx: int, source: str):
                     "artist_name":  artist_name,
                     "search_query": search_query,
                 },
-                timeout=30,   # yt-dlp fallback can take a few seconds
+                timeout=30,
             )
         except requests.exceptions.ConnectionError:
             st.error(
@@ -76,7 +76,6 @@ def _trigger_download(track: dict, idx: int, source: str):
             st.error(f"Unexpected error: {e}")
             return
 
-    # ── Handle response codes ────────────────────────────────
     if resp.status_code == 200:
         data   = resp.json()
         job_id = data.get("job_id", "")
@@ -85,30 +84,13 @@ def _trigger_download(track: dict, idx: int, source: str):
             "job_id": job_id,
             "url":    data.get("youtube_url", ""),
             "title":  track_name,
+            "source": "discovery",
         })
-        if "library" not in st.session_state:
-            st.session_state.library = []
-
     elif resp.status_code == 404:
-        st.warning(
-            f"🔍 Could not find **{track_name}** on YouTube. "
-            "You can try downloading it manually from the Home page."
-        )
-
+        st.warning(f"🔍 Could not find **{track_name}** on YouTube.")
     elif resp.status_code == 503:
-        st.error(
-            "🚫 The download service (ytconverter) is offline. "
-            "Make sure it is running on port 8000."
-        )
-
-    elif resp.status_code == 429:
-        st.warning(
-            "⏳ YouTube search quota reached for today. "
-            "The system will automatically retry with yt-dlp. Try again shortly."
-        )
-
+        st.error("🚫 The download service (ytconverter) is offline.")
     else:
-        # Surface the backend error message for any unexpected status
         try:
             detail = resp.json().get("detail", resp.text)
         except Exception:
@@ -147,7 +129,6 @@ with tab_search:
     with btn_col:
         search_clicked = st.button("🔍 Search", use_container_width=True, key="search_btn")
 
-    # Execute search
     if search_clicked and search_query:
         with st.spinner("Searching iTunes catalog…"):
             try:
@@ -158,15 +139,11 @@ with tab_search:
                 )
                 if res.status_code == 200:
                     st.session_state.search_results = res.json()
-                elif res.status_code == 503:
-                    st.error("Discovery service returned an error. Check your API keys.")
-                    st.session_state.search_results = []
                 else:
                     st.error(f"Search error: {res.text}")
                     st.session_state.search_results = []
 
             except requests.exceptions.ConnectionError:
-                # Graceful fallback: call iTunes directly from frontend
                 st.caption("ℹ️ Discovery service offline — falling back to direct iTunes search.")
                 try:
                     res = requests.get(
@@ -278,7 +255,7 @@ with tab_mood:
     st.markdown(section_label("PICK A VIBE"), unsafe_allow_html=True)
     st.markdown(
         "<p style='color:#94a3b8; font-size:0.9rem; margin-bottom:1rem;'>"
-        "Select a mood to discover top tracks. Powered by Last.fm · Artwork via iTunes.</p>",
+        "Select a mood to discover tracks. Results vary each time! Powered by Last.fm · Artwork via iTunes.</p>",
         unsafe_allow_html=True,
     )
 
@@ -303,45 +280,61 @@ with tab_mood:
         with cols[i % 6]:
             if st.button(label, key=f"mood_{tag}", use_container_width=True):
                 selected_mood = tag
+                st.session_state.last_mood = tag
+
+    def _fetch_mood(mood_tag: str):
+        """Fetch mood tracks from the recommendation service."""
+        try:
+            res = requests.get(
+                f"{RECOMMENDATION_API_URL}/mood",
+                params={"tag": mood_tag, "limit": 20, "page": 0},  # page=0 = random
+                timeout=20,
+            )
+            if res.status_code == 200:
+                st.session_state.mood_results = res.json()
+            elif res.status_code == 503:
+                st.warning(
+                    "Last.fm API key not configured. "
+                    "Add LASTFM_API_KEY to your .env file to enable mood discovery."
+                )
+                st.session_state.mood_results = []
+            else:
+                st.error(f"Error: {res.text}")
+                st.session_state.mood_results = []
+        except requests.exceptions.ConnectionError:
+            st.error(
+                "⚠️ Could not connect to the Discovery service. "
+                "Make sure it is running on port 8001."
+            )
+            st.session_state.mood_results = []
+        except Exception as e:
+            st.error(f"Mood discovery failed: {e}")
+            st.session_state.mood_results = []
 
     if selected_mood:
         with st.spinner(f"Finding {selected_mood} tracks + artwork…"):
-            try:
-                res = requests.get(
-                    f"{RECOMMENDATION_API_URL}/mood",
-                    params={"tag": selected_mood, "limit": 20},
-                    timeout=20,   # iTunes artwork enrichment adds a few seconds
-                )
-                if res.status_code == 200:
-                    st.session_state.mood_results = res.json()
-                elif res.status_code == 503:
-                    st.warning(
-                        "Last.fm API key not configured. "
-                        "Add LASTFM_API_KEY to your .env file to enable mood discovery."
-                    )
-                    st.session_state.mood_results = []
-                else:
-                    st.error(f"Error: {res.text}")
-                    st.session_state.mood_results = []
-            except requests.exceptions.ConnectionError:
-                st.error(
-                    "⚠️ Could not connect to the Discovery service. "
-                    "Make sure it is running on port 8001 (launch via Start-SunLeo.bat)."
-                )
-                st.session_state.mood_results = []
-            except Exception as e:
-                st.error(f"Mood discovery failed: {e}")
-                st.session_state.mood_results = []
+            _fetch_mood(selected_mood)
 
     # ── Render mood results ──
     mood_tracks = st.session_state.mood_results
     if mood_tracks:
         st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown(
-            f"<div style='color:#a78bfa; font-size:0.9rem; font-weight:600; "
-            f"margin-bottom:0.8rem;'>Found {len(mood_tracks)} tracks</div>",
-            unsafe_allow_html=True,
-        )
+
+        # Header with refresh button
+        header_col, refresh_col = st.columns([4, 1])
+        with header_col:
+            st.markdown(
+                f"<div style='color:#a78bfa; font-size:0.9rem; font-weight:600; "
+                f"margin-bottom:0.8rem;'>Found {len(mood_tracks)} tracks</div>",
+                unsafe_allow_html=True,
+            )
+        with refresh_col:
+            if st.button("🔄 Show Different Tracks", key="refresh_mood", use_container_width=True):
+                current_mood = st.session_state.get("last_mood")
+                if current_mood:
+                    with st.spinner(f"Refreshing {current_mood} tracks…"):
+                        _fetch_mood(current_mood)
+                    st.rerun()
 
         for idx, track in enumerate(mood_tracks):
             with st.container():
@@ -396,7 +389,7 @@ if st.session_state.discovery_jobs:
     )
 
     all_completed = True
-    newly_added    = False   # tracks whether this run appended anything to the library
+    newly_added    = False
 
     for job in st.session_state.discovery_jobs:
         job_id = job.get("job_id", "")
@@ -438,7 +431,7 @@ if st.session_state.discovery_jobs:
                         st.session_state.library.append(
                             {"url": full_url, "title": title, "metadata": metadata}
                         )
-                        newly_added = True   # flag so we rerun once more to surface it
+                        newly_added = True
                 elif status not in ("completed", "failed"):
                     all_completed = False
 
@@ -449,12 +442,10 @@ if st.session_state.discovery_jobs:
         except requests.exceptions.ConnectionError:
             st.warning("⚠️ Cannot reach ytconverter to check download status.")
         except Exception:
-            pass  # silently skip bad status checks
+            pass
 
     if not all_completed:
         time.sleep(3)
         st.rerun()
     elif newly_added:
-        # All jobs done AND we just added new tracks to the library —
-        # fire one final rerun so the sidebar player reflects them immediately.
         st.rerun()

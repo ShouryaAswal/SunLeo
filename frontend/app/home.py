@@ -6,7 +6,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(_PROJECT_ROOT / ".env")
+try:
+    load_dotenv(_PROJECT_ROOT / ".env")
+except (IndexError, OSError):
+    pass
 
 st.set_page_config(
     page_title="Sun Leo — Free Music Downloader",
@@ -123,6 +126,12 @@ with header_right:
             )
         with logout_col:
             if st.button("Logout", key="header_logout", type="secondary"):
+                # Clear Firebase session so check_session() won't re-auth on rerun
+                if auth_obj is not None:
+                    try:
+                        auth_obj.sign_out()
+                    except Exception:
+                        pass
                 st.session_state.firebase_user = None
                 st.rerun()
     else:
@@ -194,6 +203,17 @@ if st.button("🚀 Download MP3s", key="download_btn", use_container_width=True)
                     jobs = data.get("jobs", [])
                     st.success(f"Successfully queued {len(jobs)} jobs!")
                     st.session_state["active_jobs"] = jobs
+                    # Also store in discovery_jobs for the Downloads page
+                    if "discovery_jobs" not in st.session_state:
+                        st.session_state.discovery_jobs = []
+                    for job in jobs:
+                        if job.get("job_id"):
+                            st.session_state.discovery_jobs.append({
+                                "job_id": job["job_id"],
+                                "url": job.get("url", ""),
+                                "title": job.get("url", "YouTube Download"),
+                                "source": "home",
+                            })
             except Exception as e:
                 st.error(f"Failed to connect to backend: {str(e)}")
 

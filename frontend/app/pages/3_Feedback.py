@@ -12,8 +12,11 @@ import streamlit as st
 from dotenv import load_dotenv
 
 # ── env ────────────────────────────────────────────────────────────────────────
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-load_dotenv(_PROJECT_ROOT / ".env")
+try:
+    _PROJECT_ROOT = Path(__file__).resolve().parents[3]
+    load_dotenv(_PROJECT_ROOT / ".env")
+except (IndexError, OSError):
+    pass
 
 # ── page config ────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="SunLeo — Feedback", page_icon="📝", layout="wide")
