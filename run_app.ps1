@@ -4,7 +4,7 @@ Write-Host "=================================="
 Write-Host "       SunLeo App Launcher        "
 Write-Host "=================================="
 Write-Host ""
-Write-Host "1. Cleaning up old processes (Freeing ports 8000, 8001, 8002 & 8501)..."
+Write-Host "1. Cleaning up old processes (Freeing ports 8000, 8001, 8002, 8501 & 5173)..."
 
 # Function to safely kill processes on a specific port
 function Clear-Port($port) {
@@ -26,6 +26,7 @@ Clear-Port 8000
 Clear-Port 8001
 Clear-Port 8002
 Clear-Port 8501
+Clear-Port 5173
 
 Write-Host "Waiting briefly for ports to be fully released..."
 Start-Sleep -Seconds 2
@@ -57,15 +58,20 @@ Write-Host "6. Starting Frontend (Streamlit) on port 8501 in a new window..."
 Start-Process powershell.exe -ArgumentList "-NoExit -Command `"cd '$baseDir'; & '.\\.venv\\Scripts\\Activate.ps1'; cd frontend; streamlit run app/home.py --server.port 8501`""
 Write-Host "   -> Frontend launched."
 
+Write-Host "7. Starting React Frontend (Vite) on port 5173 in a new window..."
+Start-Process powershell.exe -ArgumentList "-NoExit -Command `"cd '$baseDir\frontend2'; npm run dev`""
+Write-Host "   -> React Frontend launched."
+
 Write-Host ""
 Write-Host "=================================="
 Write-Host "        Startup Complete!         "
 Write-Host "=================================="
 Write-Host ""
-Write-Host "  Backend (YTConverter):  http://localhost:8000"
-Write-Host "  Backend (Discovery):    http://localhost:8001"
-Write-Host "  Backend (Chatbot):      http://localhost:8002"
-Write-Host "  Frontend (Streamlit):   http://localhost:8501"
+Write-Host "  Backend (YTConverter):    http://localhost:8000"
+Write-Host "  Backend (Discovery):      http://localhost:8001"
+Write-Host "  Backend (Chatbot):        http://localhost:8002"
+Write-Host "  Frontend (Streamlit):     http://localhost:8501"
+Write-Host "  Frontend2 (React + Vite): http://localhost:5173"
 Write-Host ""
 Write-Host "You can close this window now. The apps are running in separate windows."
 Start-Sleep -Seconds 3
