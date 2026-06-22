@@ -8,7 +8,8 @@ export function PlayerProvider({ children }) {
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolumeState] = useState(0.7);
-  const audioRef = useRef(new Audio());
+  const audioRef = useRef(null);
+  if (!audioRef.current) audioRef.current = new Audio();
   const prevVolume = useRef(0.7);
 
   const playTrack = useCallback((track) => {

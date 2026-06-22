@@ -23,7 +23,8 @@ export function DownloadProvider({ children }) {
       setJobs(prev => {
         const pending = prev.filter(j => j.status === 'queued' || j.status === 'running');
         if (pending.length === 0) return prev;
-        pending.forEach(async (job) => {
+        // Fire polling outside of setState
+        Promise.allSettled(pending.map(async (job) => {
           try {
             const data = await getJobStatus(job.jobId);
             setJobs(p => p.map(j => j.jobId === job.jobId ? {
@@ -34,7 +35,7 @@ export function DownloadProvider({ children }) {
               metadata: data.metadata || j.metadata,
             } : j));
           } catch {}
-        });
+        }));
         return prev;
       });
     };
